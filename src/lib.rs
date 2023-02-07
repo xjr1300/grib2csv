@@ -46,13 +46,21 @@ const HORIZONTAL_INCREMENT: u32 = 12_500;
 const VERTICAL_INCREMENT: u32 = 8_333;
 /// 第3節 走査モード
 const SCANNING_MODE: u8 = 0x00;
+/// 第5節 資料表現テンプレート番号: ランレングス圧縮
+const DOCUMENT_EXPRESSION_TEMPLATE: u16 = 200;
+/// 第5節 1データのビット数
+const BITS_PER_DATA: u8 = 8;
+/// 第5節 レベルの最大値
+const MAX_LEVEL: u16 = 98;
+/// 第5節 データ代表値の尺度因子
+const DATA_VALUE_FACTOR: u8 = 1;
 
 pub struct GRIB2Info {
     /// grib2は世界標準時で日時を記録
     pub date_time: PrimitiveDateTime,
     /// 1データ（レベル値とランレングス値）のビット数
     pub data_per_bits: u8,
-    /// 今回の圧縮に用いたレベルの最大値
+    /// 今回の圧縮に用いたレベルの最大値、またはレベルの最大値（どっち？！）
     pub maxv: u16,
     /// レベル値と物理値(mm/h)の対応を格納するコレクション
     pub level_values: HashMap<u16, u16>,
@@ -237,7 +245,9 @@ fn read_number_of_points_in_section3(reader: &mut BufReader<File>) -> anyhow::Re
         read_u32(reader).map_err(|_| anyhow!("failed to read a number of points in section 3"))?;
     match value {
         NUMBER_OF_POINTS => Ok(value),
-        _ => Err(anyhow!("a number of points is not {NUMBER_OF_POINTS}")),
+        _ => Err(anyhow!(
+            "a number of points in section 3 is not {NUMBER_OF_POINTS}"
+        )),
     }
 }
 
@@ -388,12 +398,92 @@ fn read_scanning_mode(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     }
 }
 
+/// 第4節を読み飛ばす。
+///
+/// ファイルポインタが、第3節 走査モードの直後（第4節の開始）にある必要がある。
+fn skip_section4(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+    // 第4節 節の長さを読み込み
+    let length = read_u32(reader).map_err(|_| anyhow!("failed to read length of section 4"))?;
+    // 第4節をスキップ
+    reader.seek_relative((length - 4) as i64)?;
+
+    Ok(())
+}
+
+/// 第5節 全資料点の数を読み込んで、返却する。
+///
+/// ファイル・ポインタが、第5節の開始にある必要がある。
+fn read_number_of_points_in_section5(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+    // 第5節 節の長さ: 4bytes
+    // 第5節 節番号: 1byte
+    reader.seek_relative(5)?;
+    let value =
+        read_u32(reader).map_err(|_| anyhow!("failed to read a number of points in section 5"))?;
+    match value {
+        NUMBER_OF_POINTS => Ok(value),
+        _ => Err(anyhow!(
+            "a number of points in section 5 is not {NUMBER_OF_POINTS}"
+        )),
+    }
+}
+
+/// 第5節 資料表現テンプレート番号を読み込み、想定している資料表現テンプレート番号であることを確認する。
+///
+/// ファイル・ポインタが、第5節 全資料点の数の直後にある必要がある。
+fn read_document_expression_template(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+    let value =
+        read_u16(reader).map_err(|_| anyhow!("failed to read a document expression template"))?;
+    match value {
+        DOCUMENT_EXPRESSION_TEMPLATE => Ok(()),
+        _ => Err(anyhow!(
+            "a document expression template is not {DOCUMENT_EXPRESSION_TEMPLATE}"
+        )),
+    }
+}
+
+/// 第5節 1データのビット数を読み込み、想定しているビット数であることを確認する。
+///
+/// ファイル・ポインタが、第5節 資料表現テンプレート番号の直後にある必要がある。
+fn read_bits_per_data(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+    let value = read_u8(reader).map_err(|_| anyhow!("failed to read a bits per data"))?;
+    match value {
+        BITS_PER_DATA => Ok(()),
+        _ => Err(anyhow!("a bits per data is not {BITS_PER_DATA}")),
+    }
+}
+
+/// 第5節 今回の圧縮に用いたレベルの最大値を読み込み、返却する。
+///
+/// ファイル・ポインタが、第5節 1データのビット数の直後にある必要がある。
+fn read_max_level_of_this_time(reader: &mut BufReader<File>) -> anyhow::Result<u16> {
+    read_u16(reader).map_err(|_| anyhow!("failed to read a max level of this time"))
+}
+
+/// 第5節 レベルの最大値を読み込み、返却する。
+///
+/// ファイル・ポインタが、第5節 今回の圧縮に用いたレベルの最大値の直後にある必要がある。
+fn read_max_level(reader: &mut BufReader<File>) -> anyhow::Result<u16> {
+    read_u16(reader).map_err(|_| anyhow!("failed to read a max level"))
+}
+
+/// 第5節 データ代表値の尺度因子を読み込み、想定している尺度因子であることを確認する。
+///
+/// ファイル・ポインタが、第5節 レベルの最大値の直後にある必要がある。
+fn read_data_value_factor(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+    let value = read_u8(reader).map_err(|_| anyhow!("failed to read a data value factor"))?;
+    match value {
+        DATA_VALUE_FACTOR => Ok(()),
+        _ => Err(anyhow!("a data value factor is not {DATA_VALUE_FACTOR}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use time::macros::datetime;
 
     const SAMPLE_FILE: &'static str = "fixtures/20200707000000_grib2.bin";
+    const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 73;
 
     #[test]
     fn can_read_grib_file() {
@@ -506,5 +596,23 @@ mod tests {
         assert!(read_vertical_increment(&mut reader).is_ok());
         // 走査モード
         assert!(read_scanning_mode(&mut reader).is_ok());
+        // 第4節を読み飛ばす
+        assert!(skip_section4(&mut reader).is_ok());
+        // 第5節の全資料点の数
+        assert!(read_number_of_points_in_section5(&mut reader).is_ok());
+        // 資料表現テンプレート番号
+        assert!(read_document_expression_template(&mut reader).is_ok());
+        // 1データのビット数
+        assert!(read_bits_per_data(&mut reader).is_ok());
+        // 今回の圧縮に用いたレベルの最大値
+        let max_level = read_max_level_of_this_time(&mut reader);
+        assert!(max_level.is_ok());
+        assert_eq!(max_level.unwrap(), SAMPLE_MAX_LEVEL_THIS_TIME);
+        // レベルの最大値
+        let max_level = read_max_level(&mut reader);
+        assert!(max_level.is_ok());
+        assert_eq!(max_level.unwrap(), MAX_LEVEL);
+        // データ代表値の尺度因子
+        assert!(read_data_value_factor(&mut reader).is_ok());
     }
 }
