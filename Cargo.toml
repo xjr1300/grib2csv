@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.69"
-time = "0.3.17"
+time = { version = "0.3.17", features = ["parsing", "macros"] }
