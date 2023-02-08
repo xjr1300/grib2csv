@@ -20,8 +20,6 @@ const CREATION_STATUS: u8 = 0;
 const DOCUMENT_KIND: u8 = 0;
 /// 第3節 格子系定義の出典: 緯度／経度格子（正距円筒図法又はプレートカリー図法）
 const GRID_SYSTEM_DEFINITION: u8 = 0;
-/// 第3節 資料点数: 2560 * 3360 = 8601600
-const NUMBER_OF_POINTS: u32 = 8_601_600;
 /// 第3節 格子系定義のテンプレート番号: 緯度・経度格子
 const GRID_SYSTEM_DEFINITION_TEMPLATE: u16 = 0;
 /// 第3節 地球の形状: GRS80回転楕円体
@@ -32,18 +30,6 @@ const NUMBER_OF_POINT_AT_VERTICAL: u32 = 2_560;
 const NUMBER_OF_POINT_AT_HORIZONTAL: u32 = 3_360;
 /// 第3節 原作成領域の基本角
 const CREATION_RANGE_ANGLE: u32 = 0;
-/// 第3節 最初の格子点の緯度
-const NORTHERNMOST_GRID_POINT_LATITUDE: u32 = 47_995_833;
-/// 第3節 最初の格子点の経度
-const WESTERNMOST_GRID_POINT_LONGITUDE: u32 = 118_006_250;
-/// 第3節 最後の格子点の緯度
-const SOUTHERNMOST_GRID_POINT_LATITUDE: u32 = 20_004_167;
-/// 第3節 最後の格子点の経度
-const EASTERNMOST_GRID_POINT_LONGITUDE: u32 = 149_993_750;
-/// 第3節 i方向（経線方向）の増分値
-const HORIZONTAL_INCREMENT: u32 = 12_500;
-/// 第3節 j方向（緯線方向）の増分値
-const VERTICAL_INCREMENT: u32 = 8_333;
 /// 第3節 走査モード
 const SCANNING_MODE: u8 = 0x00;
 /// 第5節 資料表現テンプレート番号: ランレングス圧縮
@@ -67,23 +53,6 @@ pub struct GRIB2Info {
 }
 
 impl GRIB2Info {}
-
-/// 第0節 GRIBを読み込んで、"GRIB"が記録されているか確認する。
-///
-/// ファイル・ポインタが、ファイルの先頭にある必要がある。
-fn read_grib(reader: &mut BufReader<File>) -> anyhow::Result<()> {
-    let mut buf = [0; 4];
-
-    let length = reader.read(&mut buf)?;
-    if length != 4 {
-        return Err(anyhow!("failed to read a `GRIB`"));
-    }
-    let s = str::from_utf8(buf.as_slice())?;
-    match s {
-        "GRIB" => Ok(()),
-        _ => Err(anyhow!("failed to read a `GRIB`")),
-    }
-}
 
 /// ファイルから1バイト読み込み、u8型の値として返却する。
 fn read_u8(reader: &mut BufReader<File>) -> anyhow::Result<u8> {
@@ -118,12 +87,41 @@ fn read_u32(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
     Ok(u32::from_be_bytes(buf))
 }
 
-/// 第0節 資料分野を読み込んで、想定している資料分野であるか確認する。
+/// 第0節を読み込み、内容を確認する。
 ///
-/// ファイル・ポインタが、第0節 GRIBの直後にある必要がある。
-fn read_document_domain(reader: &mut BufReader<File>) -> anyhow::Result<()> {
-    // 第0節 保留: 2bytes
+/// ファイル・ポインタが、ファイルの先頭にあることを想定している。
+/// 関数終了後、ファイル・ポインタは第1節の開始位置に移動する。
+fn read_section0(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+    // GRIB
+    read_sectin0_grib(reader)?;
+    // 保留: 2bytes
     reader.seek_relative(2)?;
+    // 資料分野
+    read_section0_document_domain(reader)?;
+    // GRIB反番号
+    read_section0_grib_version(reader)?;
+
+    // GRIB報全体の長さ
+    reader.seek_relative(8).map_err(|e| e.into())
+}
+
+/// 第0節 GRIBを読み込んで、"GRIB"が記録されているか確認する。
+fn read_sectin0_grib(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+    let mut buf = [0; 4];
+
+    let length = reader.read(&mut buf)?;
+    if length != 4 {
+        return Err(anyhow!("failed to read a `GRIB`"));
+    }
+    let s = str::from_utf8(buf.as_slice())?;
+    match s {
+        "GRIB" => Ok(()),
+        _ => Err(anyhow!("failed to read a `GRIB`")),
+    }
+}
+
+/// 第0節 資料分野を読み込んで、想定している資料分野であるか確認する。
+fn read_section0_document_domain(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a document domain"))?;
     match value {
         DOCUMENT_DOMAIN => Ok(()),
@@ -132,9 +130,7 @@ fn read_document_domain(reader: &mut BufReader<File>) -> anyhow::Result<()> {
 }
 
 /// 第0節 GRIB版番号を読み込んで、想定しているGRIB版番号であるか確認する。
-///
-/// ファイル・ポインタが、第0節 資料分野の直後にある必要がある。
-fn read_grib_version(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section0_grib_version(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a grib version"))?;
     match value {
         GRIB_VERSION => Ok(()),
@@ -142,16 +138,41 @@ fn read_grib_version(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     }
 }
 
-/// 第１節 GRIBマスター表バージョン番号を読み込んで、想定しているGRIBマスター表バージョン番号であるか確認する。
+/// 第1節情報
+pub struct Section1 {
+    /// 資料の参照時刻（日時）
+    referenced_at: PrimitiveDateTime,
+}
+
+/// 第1節を読み込んで、第1節の情報を返却する。
 ///
-/// ファイル・ポインタが、第0節 GRIB版番号の直後にある必要がある。
-fn read_grib_master_table_version(reader: &mut BufReader<File>) -> anyhow::Result<()> {
-    // 第0節 GRIB全体の長さ: 8bytes
-    // 第1節 節の長さ: 4bytes
-    // 第1節 節番号: 1bytes
-    // 第1節 作成中枢の識別: 2bytes
-    // 第1節 作成副中枢: 2bytes
-    reader.seek_relative(17)?;
+/// ファイルポインタが、第1節の開始位置にあることを想定している。
+/// 関数終了後、ファイルポインタは第3節の開始位置に移動する。
+/// なお、実装時点で、第2節は省略されている。
+fn read_section1(reader: &mut BufReader<File>) -> anyhow::Result<Section1> {
+    // 節の長さ: 4bytes
+    // 節番号: 1bytes
+    // 作成中枢の識別: 2bytes
+    // 作成副中枢: 2bytes
+    reader.seek_relative(9)?;
+    // GRIBマスター表バージョン番号
+    read_section1_grib_master_table_version(reader)?;
+    // GRIB地域表バージョン番号
+    read_section1_grib_local_table_version(reader)?;
+    // 参照時刻の意味: 1byte
+    reader.seek_relative(1)?;
+    // 資料の参照時刻（日時）
+    let referenced_at = read_section1_referenced_at(reader)?;
+    // 作成ステータス
+    read_section1_creation_status(reader)?;
+    // 資料の種類
+    read_section1_document_kind(reader)?;
+
+    Ok(Section1 { referenced_at })
+}
+
+/// 第１節 GRIBマスター表バージョン番号を読み込んで、想定しているGRIBマスター表バージョン番号であるか確認する。
+fn read_section1_grib_master_table_version(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value =
         read_u8(reader).map_err(|_| anyhow!("failed to read a grib master table version"))?;
     match value {
@@ -163,9 +184,7 @@ fn read_grib_master_table_version(reader: &mut BufReader<File>) -> anyhow::Resul
 }
 
 /// 第１節 GRIB地域差バージョン番号を読み込んで、想定しているGRIB地域差バージョン番号であるか確認する。
-///
-/// ファイル・ポインタが、第1節 GRIBマスター表バージョン番号の直後にある必要がある。
-fn read_grib_local_table_version(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section1_grib_local_table_version(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value =
         read_u8(reader).map_err(|_| anyhow!("failed to read a grib local table version"))?;
     match value {
@@ -177,11 +196,7 @@ fn read_grib_local_table_version(reader: &mut BufReader<File>) -> anyhow::Result
 }
 
 /// 第１節 資料の参照日時を読み込んで返却する。
-///
-/// ファイル・ポインタが、第1節 GRIB地域表バージョン番号の直後にある必要がある。
-fn read_reference_date_time(reader: &mut BufReader<File>) -> anyhow::Result<PrimitiveDateTime> {
-    // 第1節 参照時刻の意味: 1byte
-    reader.seek_relative(1)?;
+fn read_section1_referenced_at(reader: &mut BufReader<File>) -> anyhow::Result<PrimitiveDateTime> {
     // 資料の参照時刻（年）
     let year = read_u16(reader).map_err(|_| anyhow!("failed to read a reference year"))?;
     // 資料の参照時刻（月以降）
@@ -200,9 +215,7 @@ fn read_reference_date_time(reader: &mut BufReader<File>) -> anyhow::Result<Prim
 }
 
 /// 第１節 作成ステータスを読み込んで、想定している作成ステータスであるか確認する。
-///
-/// ファイル・ポインタが、第1節 資料の参照時刻（秒）の直後にある必要がある。
-fn read_creation_status(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section1_creation_status(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a creation status"))?;
     match value {
         CREATION_STATUS => Ok(()),
@@ -211,9 +224,7 @@ fn read_creation_status(reader: &mut BufReader<File>) -> anyhow::Result<()> {
 }
 
 /// 第１節 資料の種類を読み込んで、想定している資料の種類であるか確認する。
-///
-/// ファイルポインタが、第1節 作成ステータスの直後にある必要がある。
-fn read_document_kind(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section1_document_kind(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a document kind"))?;
     match value {
         DOCUMENT_KIND => Ok(()),
@@ -221,13 +232,88 @@ fn read_document_kind(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     }
 }
 
-/// 第3節 格子系定義の出典を読み込んで、想定している格子系定義の出典であるか確認する。
+/// 第3節情報
+pub struct Section3 {
+    /// 資料点数
+    number_of_points: u32,
+    /// 最初（最も左上）の格子点の緯度（10^6度単位）
+    northernmost: u32,
+    /// 最初（最も左上）の格子点の経度（10^6度単位）
+    westernmost: u32,
+    /// 最後（最も右下）の格子点の緯度（10^6度単位）
+    southernmost: u32,
+    /// 最後（最も右下）の格子点の経度（10^6度単位）
+    easternmost: u32,
+    /// i方向（経線方向）の増分（10^6度単位）
+    horizontal_increment: u32,
+    /// j方向（緯線方向）の増分（10^6度単位）
+    vertical_increment: u32,
+}
+
+/// 第3節を読み込んで、第3節の情報を返却する。
 ///
-/// ファイル・ポインタが、第1節終了直後（第3節開始）にある必要がある。
-fn read_grid_system_definition(reader: &mut BufReader<File>) -> anyhow::Result<()> {
-    // 第3節 節の長さ: 4bytes
+/// ファイルポインタが、第3節の開始位置にあることを想定している。
+/// 関数終了後、ファイルポインタは第4節の開始位置に移動する。
+fn read_section3(reader: &mut BufReader<File>) -> anyhow::Result<Section3> {
+    // 節の長さ: 4bytes
     // 節番号: 1byte
     reader.seek_relative(5)?;
+    // 格子系定義の出典
+    read_section3_grid_system_definition(reader)?;
+    // 資料点数
+    let number_of_points = read_section3_number_of_points(reader)?;
+    // 格子点を定義するリストのオクテット数: 1byte
+    // 格子点を定義するリストの説明: 1byte
+    reader.seek_relative(2)?;
+    // 格子系定義テンプレート番号
+    read_section3_grid_system_definition_template(reader)?;
+    // 地球の形状
+    read_section3_earth_figure(reader)?;
+    // 地球球体の半径の尺度因子: 1byte
+    // 地球球体の半径の尺度付き半径: 4bytes
+    // 地球回転楕円体の長軸の尺度因子: 1byte
+    // 地球回転楕円体の長軸の尺度付きの長さ: 4byte
+    // 地球回転楕円体の短軸の尺度因子: 1byte
+    // 地球回転楕円体の短軸の尺度付きの長さ: 4byte
+    reader.seek_relative(15)?;
+    // 緯線に沿った格子点数
+    read_section3_number_of_points_at_vertical(reader)?;
+    // 経線に沿った格子点数
+    read_section3_number_of_points_at_horizontal(reader)?;
+    // 原作成領域の基本角
+    read_section3_creation_range_angle(reader)?;
+    // 端点の経度及び緯度並びに方向増分の定義に使われる基本角の細分: 4bytes
+    reader.seek_relative(4)?;
+    // 最初の格子点の緯度
+    let northernmost = read_section3_northernmost_degree(reader)?;
+    // 最初の格子点の経度
+    let westernmost = read_section3_westernmost_degree(reader)?;
+    // 分解能及び成分フラグ: 1byte
+    reader.seek_relative(1)?;
+    // 最後の格子点の緯度
+    let southernmost = read_section3_southernmost_degree(reader)?;
+    // 最後の格子点の経度
+    let easternmost = read_section3_easternmost_degree(reader)?;
+    // i方向の増分
+    let horizontal_increment = read_section3_horizontal_increment(reader)?;
+    // j方向の増分
+    let vertical_increment = read_section3_vertical_increment(reader)?;
+    // 走査モード
+    read_section3_scanning_mode(reader)?;
+
+    Ok(Section3 {
+        number_of_points,
+        northernmost,
+        westernmost,
+        southernmost,
+        easternmost,
+        horizontal_increment,
+        vertical_increment,
+    })
+}
+
+/// 第3節 格子系定義の出典を読み込んで、想定している格子系定義の出典であるか確認する。
+fn read_section3_grid_system_definition(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a grid system definition"))?;
     match value {
         GRID_SYSTEM_DEFINITION => Ok(()),
@@ -238,26 +324,14 @@ fn read_grid_system_definition(reader: &mut BufReader<File>) -> anyhow::Result<(
 }
 
 /// 第3節 資料点数を読み込んで、返却する。
-///
-/// ファイル・ポインタが、第3節 節番号の直後にある必要がある。
-fn read_number_of_points_in_section3(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
-    let value =
-        read_u32(reader).map_err(|_| anyhow!("failed to read a number of points in section 3"))?;
-    match value {
-        NUMBER_OF_POINTS => Ok(value),
-        _ => Err(anyhow!(
-            "a number of points in section 3 is not {NUMBER_OF_POINTS}"
-        )),
-    }
+fn read_section3_number_of_points(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+    read_u32(reader).map_err(|_| anyhow!("failed to read a number of points in section 3"))
 }
 
 /// 第3節 格子系定義テンプレート番号を読み込んで、想定している格子系定義テンプレート番号であるか確認する。
-///
-/// ファイル・ポインタが、第3節 資料点数の直後にある必要がある。
-fn read_grid_system_definition_template(reader: &mut BufReader<File>) -> anyhow::Result<()> {
-    // 第3節 格子点数を定義するリストのオクテット数: 1byte
-    // 第3節 格子点数を定義するリストの説明: 1byte
-    reader.seek_relative(2)?;
+fn read_section3_grid_system_definition_template(
+    reader: &mut BufReader<File>,
+) -> anyhow::Result<()> {
     let value = read_u16(reader)
         .map_err(|_| anyhow!("failed to read a grid system definition template"))?;
     match value {
@@ -269,9 +343,7 @@ fn read_grid_system_definition_template(reader: &mut BufReader<File>) -> anyhow:
 }
 
 /// 第3節 地球の形状を読み込んで、想定している地球の形状であるか確認する。
-///
-/// ファイル・ポインタが、第3節 格子系定義テンプレート番号の直後にある必要がある。
-fn read_earth_figure(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section3_earth_figure(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a earth figure"))?;
     match value {
         EARTH_FIGURE => Ok(()),
@@ -280,16 +352,7 @@ fn read_earth_figure(reader: &mut BufReader<File>) -> anyhow::Result<()> {
 }
 
 /// 第3節 緯線に沿った格子点数を読み込んで、想定している点数であるか確認する。
-///
-/// ファイル・ポインタが、第3節 地球の形状の直後にある必要がある。
-fn read_number_of_points_at_vertical(reader: &mut BufReader<File>) -> anyhow::Result<()> {
-    // 第3節 地球球体の半径の尺度因子: 1byte
-    // 第3節 地球球体の半径の尺度付き半径: 4bytes
-    // 第3節 地球回転楕円体の長軸の尺度因子: 1byte
-    // 第3節 地球回転楕円体の長軸の尺度付きの長さ: 4byte
-    // 第3節 地球回転楕円体の短軸の尺度因子: 1byte
-    // 第3節 地球回転楕円体の短軸の尺度付きの長さ: 4byte
-    reader.seek_relative(15)?;
+fn read_section3_number_of_points_at_vertical(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value =
         read_u32(reader).map_err(|_| anyhow!("failed to read a number of points at vertical"))?;
     match value {
@@ -301,9 +364,9 @@ fn read_number_of_points_at_vertical(reader: &mut BufReader<File>) -> anyhow::Re
 }
 
 /// 第3節 経線に沿った格子点数を読み込んで、想定している点数であるか確認する。
-///
-/// ファイル・ポインタが、第3節 緯線に沿った格子点の直後にある必要がある。
-fn read_number_of_points_at_horizontal(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section3_number_of_points_at_horizontal(
+    reader: &mut BufReader<File>,
+) -> anyhow::Result<()> {
     let value =
         read_u32(reader).map_err(|_| anyhow!("failed to read a number of points at horizontal"))?;
     match value {
@@ -315,9 +378,7 @@ fn read_number_of_points_at_horizontal(reader: &mut BufReader<File>) -> anyhow::
 }
 
 /// 第3節 原作成領域の基本角を読み込んで、想定している角度であるか確認する。
-///
-/// ファイル・ポインタが、第3節 経線に沿った格子点数の直後にある必要がある。
-fn read_creation_range_angle(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section3_creation_range_angle(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value = read_u32(reader).map_err(|_| anyhow!("failed to read a creation range angle"))?;
     match value {
         CREATION_RANGE_ANGLE => Ok(()),
@@ -328,65 +389,37 @@ fn read_creation_range_angle(reader: &mut BufReader<File>) -> anyhow::Result<()>
 }
 
 /// 第3節 最初の格子点の緯度を読み込んで、返却する。
-///
-/// ファイル・ポインタが、第3節 原作成領域の基本角の直後にある必要がある。
-fn read_northernmost_grid_point_latitude(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
-    // 第3節 端点の経度及び緯度並びに方向増分の定義に使われる基本角の細分: 4bytes
-    reader.seek_relative(4)?;
+fn read_section3_northernmost_degree(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a northernmost grid point latitude"))
 }
 
 /// 第3節 最初の格子点の経度を読み込んで、返却する。
-///
-/// ファイル・ポインタが、第3節 最初の格子点の緯度の直後にある必要がある。
-fn read_westernmost_grid_point_longitude(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_section3_westernmost_degree(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a westernmost grid point longitude"))
 }
 
 /// 第3節 最後の格子点の緯度を読み込んで、返却する。
-///
-/// ファイル・ポインタが、第3節 最初の格子点の経度の直後にある必要がある。
-fn read_southernmost_grid_point_latitude(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
-    // 第3節 分解能及び成分フラグ: 1byte
-    reader.seek_relative(1)?;
+fn read_section3_southernmost_degree(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a southernmost grid point latitude"))
 }
 
 /// 第3節 最後の格子点の経度を読み込んで、返却する。
-///
-/// ファイル・ポインタが、第3節 最後の格子点の緯度の直後にある必要がある。
-fn read_easternmost_grid_point_longitude(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_section3_easternmost_degree(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a easternmost grid point longitude"))
 }
 
 /// 第3節 i方向（経線方向）の増分を読み込んで、想定している増分か確認する。
-///
-/// ファイル・ポインタが、第3節 最後の格子点の経度の直後にある必要がある。
-fn read_horizontal_increment(reader: &mut BufReader<File>) -> anyhow::Result<()> {
-    let value = read_u32(reader).map_err(|_| anyhow!("failed to read a horizontal increment"))?;
-    match value {
-        HORIZONTAL_INCREMENT => Ok(()),
-        _ => Err(anyhow!(
-            "a horizontal increment is not {HORIZONTAL_INCREMENT}"
-        )),
-    }
+fn read_section3_horizontal_increment(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+    read_u32(reader).map_err(|_| anyhow!("failed to read a horizontal increment"))
 }
 
 /// 第3節 j方向（緯線方向）の増分を読み込んで、想定している増分か確認する。
-///
-/// ファイル・ポインタが、第3節 i方向の増分の直後にある必要がある。
-fn read_vertical_increment(reader: &mut BufReader<File>) -> anyhow::Result<()> {
-    let value = read_u32(reader).map_err(|_| anyhow!("failed to read a vertical increment"))?;
-    match value {
-        VERTICAL_INCREMENT => Ok(()),
-        _ => Err(anyhow!("a vertical increment is not {VERTICAL_INCREMENT}")),
-    }
+fn read_section3_vertical_increment(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+    read_u32(reader).map_err(|_| anyhow!("failed to read a vertical increment"))
 }
 
 /// 第3節 走査モードを読み込んで、想定しているモードか確認する。
-///
-/// ファイル・ポインタが、第3節 j方向の増分の直後にある必要がある。
-fn read_scanning_mode(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section3_scanning_mode(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let mut buf = [0; 1];
     let length = reader.read(&mut buf)?;
     if length != 1 {
@@ -400,7 +433,8 @@ fn read_scanning_mode(reader: &mut BufReader<File>) -> anyhow::Result<()> {
 
 /// 第4節を読み飛ばす。
 ///
-/// ファイルポインタが、第3節 走査モードの直後（第4節の開始）にある必要がある。
+/// ファイルポインタが、第4節の開始位置にあることを想定している。
+/// 関数終了後、ファイルポインタは第5節の開始位置に移動する。
 fn skip_section4(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     // 第4節 節の長さを読み込み
     let length = read_u32(reader).map_err(|_| anyhow!("failed to read length of section 4"))?;
@@ -410,26 +444,60 @@ fn skip_section4(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 第5節 全資料点の数を読み込んで、返却する。
+/// 第5節情報
+pub struct Section5 {
+    /// 全資料点の数
+    number_of_points: u32,
+    /// 1データのビット数
+    bits_per_data: u8,
+    /// 今回の圧縮に落ちいたレベルの最大値
+    max_level_at_file: u16,
+    /// レベルの最大値
+    max_level: u16,
+    /// レベルmに対応するデータ代表値
+    /// レベル値と物理値(mm/h)の対応を格納するコレクション
+    pub level_values: HashMap<u16, u16>,
+}
+
+/// 第5節を読み込んで、第3節の情報を返却する。
 ///
-/// ファイル・ポインタが、第5節の開始にある必要がある。
+/// ファイルポインタが、第5節の開始位置にあることを想定している。
+/// 関数終了後、ファイルポインタは第6節の開始位置に移動する。
+fn read_section5(reader: &mut BufReader<File>) -> anyhow::Result<Section5> {
+    // 節の長さ
+    let length = read_u32(reader).map_err(|_| anyhow!("failed to read length of section 5"))?;
+    // 節番号: 1byte
+    reader.seek_relative(1)?;
+    // 全資料点の数
+    let number_of_points = read_number_of_points_in_section5(reader)?;
+    // 資料表現テンプレート番号
+    read_document_expression_template(reader)?;
+    // 1データのビット数
+    let bits_per_data = read_bits_per_data(reader)?;
+    // 今回の圧縮に用いたレベルの最大値
+    let max_level_at_file = read_max_level_of_this_time(reader)?;
+    // レベルの私大値
+    let max_level = read_max_level(reader)?;
+    // データ代表値の尺度因子
+    read_data_value_factor(reader)?;
+    // TODO: レベルmに対応するデータ代表値
+
+    Ok(Section5 {
+        number_of_points,
+        bits_per_data,
+        max_level_at_file,
+        max_level,
+        level_values: HashMap::new(), // TODO
+    })
+}
+
+/// 第5節 全資料点の数を読み込んで、返却する。
 fn read_number_of_points_in_section5(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
-    // 第5節 節の長さ: 4bytes
     // 第5節 節番号: 1byte
-    reader.seek_relative(5)?;
-    let value =
-        read_u32(reader).map_err(|_| anyhow!("failed to read a number of points in section 5"))?;
-    match value {
-        NUMBER_OF_POINTS => Ok(value),
-        _ => Err(anyhow!(
-            "a number of points in section 5 is not {NUMBER_OF_POINTS}"
-        )),
-    }
+    read_u32(reader).map_err(|_| anyhow!("failed to read a number of points in section 5"))
 }
 
 /// 第5節 資料表現テンプレート番号を読み込み、想定している資料表現テンプレート番号であることを確認する。
-///
-/// ファイル・ポインタが、第5節 全資料点の数の直後にある必要がある。
 fn read_document_expression_template(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value =
         read_u16(reader).map_err(|_| anyhow!("failed to read a document expression template"))?;
@@ -442,33 +510,25 @@ fn read_document_expression_template(reader: &mut BufReader<File>) -> anyhow::Re
 }
 
 /// 第5節 1データのビット数を読み込み、想定しているビット数であることを確認する。
-///
-/// ファイル・ポインタが、第5節 資料表現テンプレート番号の直後にある必要がある。
-fn read_bits_per_data(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_bits_per_data(reader: &mut BufReader<File>) -> anyhow::Result<u8> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a bits per data"))?;
     match value {
-        BITS_PER_DATA => Ok(()),
+        BITS_PER_DATA => Ok(value),
         _ => Err(anyhow!("a bits per data is not {BITS_PER_DATA}")),
     }
 }
 
 /// 第5節 今回の圧縮に用いたレベルの最大値を読み込み、返却する。
-///
-/// ファイル・ポインタが、第5節 1データのビット数の直後にある必要がある。
 fn read_max_level_of_this_time(reader: &mut BufReader<File>) -> anyhow::Result<u16> {
     read_u16(reader).map_err(|_| anyhow!("failed to read a max level of this time"))
 }
 
 /// 第5節 レベルの最大値を読み込み、返却する。
-///
-/// ファイル・ポインタが、第5節 今回の圧縮に用いたレベルの最大値の直後にある必要がある。
 fn read_max_level(reader: &mut BufReader<File>) -> anyhow::Result<u16> {
     read_u16(reader).map_err(|_| anyhow!("failed to read a max level"))
 }
 
 /// 第5節 データ代表値の尺度因子を読み込み、想定している尺度因子であることを確認する。
-///
-/// ファイル・ポインタが、第5節 レベルの最大値の直後にある必要がある。
 fn read_data_value_factor(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a data value factor"))?;
     match value {
@@ -488,131 +548,28 @@ mod tests {
     #[test]
     fn can_read_grib_file() {
         let mut reader = BufReader::new(File::open(SAMPLE_FILE).unwrap());
-        // GRIBを読み込めるか確認
-        assert!(read_grib(&mut reader).is_ok(), "failed to read a `GRIB`");
-        // 資料分野が正しいか確認
-        assert!(
-            read_document_domain(&mut reader).is_ok(),
-            "failed to read a document domain"
-        );
-        // GRIB版番号が正しいか確認
-        assert!(
-            read_grib_version(&mut reader).is_ok(),
-            "failed to read a grib version"
-        );
-        // GRIBマスター表バージョン番号が正しいか確認
-        assert!(
-            read_grib_master_table_version(&mut reader).is_ok(),
-            "failed to read a grib master table version"
-        );
-        // GRIB地域表バージョン番号が正しいか確認
-        assert!(
-            read_grib_local_table_version(&mut reader).is_ok(),
-            "failed to read a grib local table version"
-        );
-        // 資料の参照日時が正しいか確認
-        let dt = read_reference_date_time(&mut reader);
-        assert!(dt.is_ok(), "failed to read a reference date time");
-        assert_eq!(dt.unwrap(), datetime!(2020-07-07 00:00:00));
-        // 作成ステータスが正しいか確認
-        assert!(
-            read_creation_status(&mut reader).is_ok(),
-            "failed to read a creation status"
-        );
-        // 資料の種類が正しいか確認
-        assert!(
-            read_document_kind(&mut reader).is_ok(),
-            "failed to read a document kind"
-        );
-        // 格子系定義の出典
-        assert!(
-            read_grid_system_definition(&mut reader).is_ok(),
-            "failed to read a grid system definition"
-        );
-        // 資料点数
-        let number_of_points = read_number_of_points_in_section3(&mut reader);
-        assert!(number_of_points.is_ok());
-        assert_eq!(number_of_points.unwrap(), NUMBER_OF_POINTS);
-        // 格子系定義テンプレート番号
-        assert!(
-            read_grid_system_definition_template(&mut reader).is_ok(),
-            "failed to read a grid system definition template"
-        );
-        // 地球の形状
-        assert!(
-            read_earth_figure(&mut reader).is_ok(),
-            "failed to read a earth figure"
-        );
-        // 緯線に沿った格子点数
-        assert!(
-            read_number_of_points_at_vertical(&mut reader).is_ok(),
-            "failed to read a number of points at vertical"
-        );
-        // 経線に沿った格子点数。
-        assert!(
-            read_number_of_points_at_horizontal(&mut reader).is_ok(),
-            "failed to read a number of points at horizontal"
-        );
-        // 原作成領域の基本角
-        assert!(
-            read_creation_range_angle(&mut reader).is_ok(),
-            "failed to read a creation range angle"
-        );
-        // 最初の格子点の緯度
-        let number_of_points = read_northernmost_grid_point_latitude(&mut reader);
-        assert!(number_of_points.is_ok());
-        assert_eq!(
-            number_of_points.unwrap(),
-            NORTHERNMOST_GRID_POINT_LATITUDE,
-            "a northernmost grid point latitude is not {NORTHERNMOST_GRID_POINT_LATITUDE}"
-        );
-        // 最初の格子点の経度
-        let number_of_points = read_westernmost_grid_point_longitude(&mut reader);
-        assert!(number_of_points.is_ok());
-        assert_eq!(
-            number_of_points.unwrap(),
-            WESTERNMOST_GRID_POINT_LONGITUDE,
-            "a westernmost grid point longitude is not {WESTERNMOST_GRID_POINT_LONGITUDE}"
-        );
-        // 最後の格子点の緯度
-        let number_of_points = read_southernmost_grid_point_latitude(&mut reader);
-        assert!(number_of_points.is_ok());
-        assert_eq!(
-            number_of_points.unwrap(),
-            SOUTHERNMOST_GRID_POINT_LATITUDE,
-            "a southernmost grid point latitude is not {SOUTHERNMOST_GRID_POINT_LATITUDE}"
-        );
-        // 最後の格子点の経度
-        let number_of_points = read_easternmost_grid_point_longitude(&mut reader);
-        assert!(number_of_points.is_ok());
-        assert_eq!(
-            number_of_points.unwrap(),
-            EASTERNMOST_GRID_POINT_LONGITUDE,
-            "a easternmost grid point longitude is not {EASTERNMOST_GRID_POINT_LONGITUDE}"
-        );
-        // i方向の増分
-        assert!(read_horizontal_increment(&mut reader).is_ok());
-        // j方向の増分
-        assert!(read_vertical_increment(&mut reader).is_ok());
-        // 走査モード
-        assert!(read_scanning_mode(&mut reader).is_ok());
+        // 第0節を読み込み
+        assert!(read_section0(&mut reader).is_ok());
+        // 第1節を読み込み
+        let section1 = read_section1(&mut reader).unwrap();
+        assert_eq!(section1.referenced_at, datetime!(2020-07-07 00:00:00));
+        // 第3節を読み込み
+        let section3 = read_section3(&mut reader).unwrap();
+        assert_eq!(section3.number_of_points, 2560 * 3360);
+        assert_eq!(section3.northernmost, 47995833);
+        assert_eq!(section3.westernmost, 118006250);
+        assert_eq!(section3.southernmost, 20004167);
+        assert_eq!(section3.easternmost, 149993750);
+        assert_eq!(section3.horizontal_increment, 12500);
+        assert_eq!(section3.vertical_increment, 8333);
         // 第4節を読み飛ばす
         assert!(skip_section4(&mut reader).is_ok());
-        // 第5節の全資料点の数
-        assert!(read_number_of_points_in_section5(&mut reader).is_ok());
-        // 資料表現テンプレート番号
-        assert!(read_document_expression_template(&mut reader).is_ok());
-        // 1データのビット数
-        assert!(read_bits_per_data(&mut reader).is_ok());
-        // 今回の圧縮に用いたレベルの最大値
-        let max_level = read_max_level_of_this_time(&mut reader);
-        assert!(max_level.is_ok());
-        assert_eq!(max_level.unwrap(), SAMPLE_MAX_LEVEL_THIS_TIME);
-        // レベルの最大値
-        let max_level = read_max_level(&mut reader);
-        assert!(max_level.is_ok());
-        assert_eq!(max_level.unwrap(), MAX_LEVEL);
-        // データ代表値の尺度因子
-        assert!(read_data_value_factor(&mut reader).is_ok());
+        // 第5章を読み込み
+        let section5 = read_section5(&mut reader).unwrap();
+        assert_eq!(section5.number_of_points, 8601600);
+        assert_eq!(section5.bits_per_data, 8);
+        assert_eq!(section5.max_level_at_file, SAMPLE_MAX_LEVEL_THIS_TIME);
+        assert_eq!(section5.max_level, 98);
+        assert!(section5.max_level_at_file <= section5.max_level);
     }
 }
