@@ -151,10 +151,16 @@ pub struct Section1 {
 /// なお、実装時点で、第2節は省略されている。
 fn read_section1(reader: &mut BufReader<File>) -> anyhow::Result<Section1> {
     // 節の長さ: 4bytes
-    // 節番号: 1bytes
+    reader.seek_relative(4)?;
+    // 節番号
+    let section_number =
+        read_u8(reader).map_err(|_| anyhow!("failed to read section number at section 1"))?;
+    if section_number != 1 {
+        return Err(anyhow!("section number is miss match in section 1"));
+    }
     // 作成中枢の識別: 2bytes
     // 作成副中枢: 2bytes
-    reader.seek_relative(9)?;
+    reader.seek_relative(4)?;
     // GRIBマスター表バージョン番号
     read_section1_grib_master_table_version(reader)?;
     // GRIB地域表バージョン番号
@@ -256,8 +262,13 @@ pub struct Section3 {
 /// 関数終了後、ファイルポインタは第4節の開始位置に移動する。
 fn read_section3(reader: &mut BufReader<File>) -> anyhow::Result<Section3> {
     // 節の長さ: 4bytes
-    // 節番号: 1byte
-    reader.seek_relative(5)?;
+    reader.seek_relative(4)?;
+    // 節番号
+    let section_number =
+        read_u8(reader).map_err(|_| anyhow!("failed to read section number at section 3"))?;
+    if section_number != 3 {
+        return Err(anyhow!("section number is miss match in section 3"));
+    }
     // 格子系定義の出典
     read_section3_grid_system_definition(reader)?;
     // 資料点数
@@ -438,8 +449,14 @@ fn read_section3_scanning_mode(reader: &mut BufReader<File>) -> anyhow::Result<(
 fn skip_section4(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     // 第4節 節の長さを読み込み
     let length = read_u32(reader).map_err(|_| anyhow!("failed to read length of section 4"))?;
+    // 節番号
+    let section_number =
+        read_u8(reader).map_err(|_| anyhow!("failed to read section number at section 4"))?;
+    if section_number != 4 {
+        return Err(anyhow!("section number is miss match in section 4"));
+    }
     // 第4節をスキップ
-    reader.seek_relative((length - 4) as i64)?;
+    reader.seek_relative((length - (4 + 1)) as i64)?;
 
     Ok(())
 }
@@ -466,8 +483,12 @@ pub struct Section5 {
 fn read_section5(reader: &mut BufReader<File>) -> anyhow::Result<Section5> {
     // 節の長さ
     let length = read_u32(reader).map_err(|_| anyhow!("failed to read length of section 5"))?;
-    // 節番号: 1byte
-    reader.seek_relative(1)?;
+    // 節番号
+    let section_number =
+        read_u8(reader).map_err(|_| anyhow!("failed to read section number at section 5"))?;
+    if section_number != 5 {
+        return Err(anyhow!("section number is miss match in section 5"));
+    }
     // 全資料点の数
     let number_of_points = read_number_of_points_in_section5(reader)?;
     // 資料表現テンプレート番号
@@ -480,14 +501,21 @@ fn read_section5(reader: &mut BufReader<File>) -> anyhow::Result<Section5> {
     let max_level = read_max_level(reader)?;
     // データ代表値の尺度因子
     read_data_value_factor(reader)?;
-    // TODO: レベルmに対応するデータ代表値
+    // レベルmに対応するデータ代表値
+    let remaining_length = (length - (4 + 1 + 4 + 2 + 1 + 2 + 2 + 1)) as u16;
+    let number_of_levels = remaining_length / 2;
+    let mut level_values = HashMap::new();
+    for i in 0..number_of_levels {
+        let value = read_u16(reader).map_err(|_| anyhow!("failed to read a level value"))?;
+        level_values.insert(i + 1, value);
+    }
 
     Ok(Section5 {
         number_of_points,
         bits_per_data,
         max_level_at_file,
         max_level,
-        level_values: HashMap::new(), // TODO
+        level_values,
     })
 }
 
