@@ -2,7 +2,13 @@ use clap::Parser;
 use grib2csv::{BoundaryBuilder, Grib2Csv};
 
 /// コマンドライン引数
-#[derive(Debug, Parser)]
+#[derive(Parser)]
+#[clap(
+    name = "grib2csv",
+    version = "0.0.1",
+    author = "xjr1300.04@gmail.com",
+    about = "GRIB2通報式による1kmメッシュ解析雨量または降水短時間予報データを、CSV形式のファイルに変換します。"
+)]
 struct Args {
     /// 入力GRIB2ファイル
     #[arg(help = "input grib file")]
