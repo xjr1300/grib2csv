@@ -70,7 +70,7 @@ cargo test -- --ignored
 
 ## Rustのインストール
 
-1. `Rust`のインストーラーを[ここから](https://static.rust-lang.org/dist/rust-1.67.0-x86_64-pc-windows-msvc.msi)ダンロードします。
+1. `Rust`のインストーラーを[ここから](https://static.rust-lang.org/dist/rust-1.67.0-x86_64-pc-windows-msvc.msi)ダウンロードします。
 2. `Rust`のインストーラーを実行します。
 3. `1`を入力して、`Enter`キーを押します。
    * Rustをデフォルトでインストールします。
