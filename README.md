@@ -72,10 +72,12 @@ cargo test -- --ignored
 
 1. `Rust`のインストーラーを[ここから](https://static.rust-lang.org/dist/rust-1.67.0-x86_64-pc-windows-msvc.msi)ダウンロードします。
 2. `Rust`のインストーラーを実行します。
-3. `1`を入力して、`Enter`キーを押します。
-   * Rustをデフォルトでインストールします。
-4. `コマンド・プロンプト`または`PowerShell`を起動して、以下のコマンドを打ちます。
+3. `コマンド・プロンプト`または`PowerShell`を起動して、以下のコマンドを打ちます。
    * バージョン番号が表示されたら、正常にRustをインストールできています。
+
+```bash
+rustc --version
+```
 
 ## grib2csvのコンパイルと実行
 
