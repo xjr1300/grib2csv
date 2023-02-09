@@ -1,9 +1,14 @@
-use std::fs::File;
-use std::io::{BufReader, Read};
+use std::cell::RefCell;
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::path::Path;
 use std::str;
 
 use anyhow::anyhow;
 use time::{Date, Month, PrimitiveDateTime, Time};
+
+type FileReader = BufReader<File>;
+type FileWriter = BufWriter<File>;
 
 /// 第0節 資料分野: 気象分野
 const DOCUMENT_DOMAIN: u8 = 0;
@@ -38,22 +43,143 @@ const BITS_PER_DATA: u8 = 8;
 /// 第5節 データ代表値の尺度因子
 const DATA_VALUE_FACTOR: u8 = 1;
 
-pub struct GRIB2Info {
-    /// grib2は世界標準時で日時を記録
-    pub date_time: PrimitiveDateTime,
-    /// 1データ（レベル値とランレングス値）のビット数
-    pub data_per_bits: u8,
-    /// 今回の圧縮に用いたレベルの最大値、またはレベルの最大値（どっち？！）
-    pub maxv: u16,
-    /// 物理値(mm/h)の対応を格納するコレクション
-    /// レベルnの物理値は、コレクションのn-1の位置に記録
-    pub level_values: Vec<u16>,
+pub struct Grib2Csv {
+    reader: RefCell<FileReader>,
+    pub section1: Section1,
+    pub section3: Section3,
+    pub section5: Section5,
 }
 
-impl GRIB2Info {}
+impl Grib2Csv {
+    /// コンストラクタ
+    ///
+    /// # 引数
+    ///
+    /// * `path` - grib2ファイルのパス。
+    ///
+    /// # 戻り値
+    ///
+    /// GRIB2Infoインスタンス。
+    pub fn new<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+        let mut reader = BufReader::new(File::open(path.as_ref())?);
+        // 第0節を読み込み
+        read_section0(&mut reader)?;
+        // 第1節を読み込み
+        let section1 = read_section1(&mut reader)?;
+        // 第3節を読み込み
+        let section3 = read_section3(&mut reader)?;
+        // 第4節を読み込み
+        read_section4(&mut reader)?;
+        // 第5節を読み込み
+        let section5 = read_section5(&mut reader)?;
+        // 第6節を読み込み
+        read_section6(&mut reader)?;
+
+        Ok(Self {
+            reader: RefCell::new(reader),
+            section1,
+            section3,
+            section5,
+        })
+    }
+
+    /// GRIB2ファイルをCSV形式のファイルを出力する。
+    ///
+    /// # 引数
+    ///
+    /// * `path` - 変換後のデータを記録するCSV形式のファイルのパス。
+    pub fn convert<P: AsRef<Path>>(&self, path: P) -> anyhow::Result<()> {
+        // CSVファイルを作成して、ヘッダを出力
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(path.as_ref())?;
+        let mut writer = BufWriter::new(file);
+        writeln!(writer, "longitude,latitude,value")?;
+
+        // 第7節を読み込み、ランレングス圧縮オクテット列の直前まで読み込み
+        let mut reader = self.reader.borrow_mut();
+        // 節の長さ: 4bytes
+        let section_bytes = read_u32(&mut reader)?;
+        // 節番号
+        let section_number = read_u8(&mut reader)?;
+        if section_number != 7 {
+            return Err(anyhow!(
+                "failed to read for the wrong section number(expected:7, read:{section_number}"
+            ));
+        }
+        // ランレングス圧縮オクテット列のバイト数を計算
+        // ランレングス圧縮を展開するための情報を精霊
+        let maxv = self.section5.max_level_at_file;
+        let nbit = self.section5.bits_per_data;
+        let lngu = 2u16.pow(nbit as u32) - 1 - maxv;
+        // ランレングス圧縮オクテットを展開して、CSVファイルに書き込み
+        let mut run_length = Vec::new();
+        let mut longitude = self.section3.westernmost;
+        let mut latitude = self.section3.northernmost;
+        for _ in 0..section_bytes - (4 + 1) {
+            let value = (read_u8(&mut reader)?) as u16;
+            if value <= maxv && !run_length.is_empty() {
+                let (level, count) = expand_run_length(&run_length, maxv, lngu);
+                // レベル値を物理値に変換して書き込み
+                self.output_values(&mut writer, level, count, &mut longitude, &mut latitude)?;
+                run_length.clear();
+            }
+            run_length.push(value);
+        }
+        if !run_length.is_empty() {
+            let (level, count) = expand_run_length(&run_length, maxv, lngu);
+            // レベル値を物理値に変換して書き込み
+            self.output_values(&mut writer, level, count, &mut longitude, &mut latitude)?;
+        }
+        writer.flush()?;
+
+        // 第8節を読み込み
+        read_section8(&mut reader)?;
+
+        Ok(())
+    }
+
+    fn output_values(
+        &self,
+        writer: &mut FileWriter,
+        level: u16,
+        count: u64,
+        longitude: &mut u32,
+        latitude: &mut u32,
+    ) -> anyhow::Result<()> {
+        if 0 < level {
+            for _ in 0..count {
+                writeln!(
+                    writer,
+                    "{:.6},{:.6},{}",
+                    (*longitude as f64) / 1_000_000f64,
+                    (*latitude as f64) / 1_000_000f64,
+                    self.section5.level_values[(level - 1) as usize],
+                )?;
+                *longitude += self.section3.horizontal_increment;
+                if self.section3.easternmost < *longitude {
+                    *longitude = self.section3.westernmost;
+                    *latitude -= self.section3.vertical_increment;
+                }
+            }
+        } else {
+            // レベル0は出力しない
+            for _ in 0..count {
+                *longitude += self.section3.horizontal_increment;
+                if self.section3.easternmost < *longitude {
+                    *longitude = self.section3.westernmost;
+                    *latitude -= self.section3.vertical_increment;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
 
 /// ファイルから1バイト読み込み、u8型の値として返却する。
-fn read_u8(reader: &mut BufReader<File>) -> anyhow::Result<u8> {
+fn read_u8(reader: &mut FileReader) -> anyhow::Result<u8> {
     let mut buf = [0; 1];
     let size = reader.read(&mut buf)?;
     if size != 1 {
@@ -64,7 +190,7 @@ fn read_u8(reader: &mut BufReader<File>) -> anyhow::Result<u8> {
 }
 
 /// ファイルから2バイト読み込み、u16型の値として返却する。
-fn read_u16(reader: &mut BufReader<File>) -> anyhow::Result<u16> {
+fn read_u16(reader: &mut FileReader) -> anyhow::Result<u16> {
     let mut buf = [0; 2];
     let size = reader.read(&mut buf)?;
     if size != 2 {
@@ -75,7 +201,7 @@ fn read_u16(reader: &mut BufReader<File>) -> anyhow::Result<u16> {
 }
 
 /// ファイルから4バイト読み込み、u32型の値として返却する。
-fn read_u32(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_u32(reader: &mut FileReader) -> anyhow::Result<u32> {
     let mut buf = [0; 4];
     let size = reader.read(&mut buf)?;
     if size != 4 {
@@ -89,7 +215,7 @@ fn read_u32(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
 ///
 /// ファイル・ポインタが、ファイルの先頭にあることを想定している。
 /// 関数終了後、ファイル・ポインタは第1節の開始位置に移動する。
-pub fn read_section0(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+pub fn read_section0(reader: &mut FileReader) -> anyhow::Result<()> {
     // GRIB
     read_section0_grib(reader)?;
     // 保留: 2bytes
@@ -104,7 +230,7 @@ pub fn read_section0(reader: &mut BufReader<File>) -> anyhow::Result<()> {
 }
 
 /// 第0節 GRIBを読み込んで、"GRIB"が記録されているか確認する。
-fn read_section0_grib(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section0_grib(reader: &mut FileReader) -> anyhow::Result<()> {
     let mut buf = [0; 4];
 
     let size = reader.read(&mut buf)?;
@@ -119,7 +245,7 @@ fn read_section0_grib(reader: &mut BufReader<File>) -> anyhow::Result<()> {
 }
 
 /// 第0節 資料分野を読み込んで、想定している資料分野であるか確認する。
-fn read_section0_document_domain(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section0_document_domain(reader: &mut FileReader) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a document domain"))?;
     match value {
         DOCUMENT_DOMAIN => Ok(()),
@@ -128,7 +254,7 @@ fn read_section0_document_domain(reader: &mut BufReader<File>) -> anyhow::Result
 }
 
 /// 第0節 GRIB版番号を読み込んで、想定しているGRIB版番号であるか確認する。
-fn read_section0_grib_version(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section0_grib_version(reader: &mut FileReader) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a grib version"))?;
     match value {
         GRIB_VERSION => Ok(()),
@@ -147,7 +273,7 @@ pub struct Section1 {
 /// ファイルポインタが、第1節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第3節の開始位置に移動する。
 /// なお、実装時点で、第2節は省略されている。
-pub fn read_section1(reader: &mut BufReader<File>) -> anyhow::Result<Section1> {
+pub fn read_section1(reader: &mut FileReader) -> anyhow::Result<Section1> {
     // 節の長さ: 4bytes
     reader.seek_relative(4)?;
     // 節番号
@@ -176,7 +302,7 @@ pub fn read_section1(reader: &mut BufReader<File>) -> anyhow::Result<Section1> {
 }
 
 /// 第１節 GRIBマスター表バージョン番号を読み込んで、想定しているGRIBマスター表バージョン番号であるか確認する。
-fn read_section1_grib_master_table_version(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section1_grib_master_table_version(reader: &mut FileReader) -> anyhow::Result<()> {
     let value =
         read_u8(reader).map_err(|_| anyhow!("failed to read a grib master table version"))?;
     match value {
@@ -188,7 +314,7 @@ fn read_section1_grib_master_table_version(reader: &mut BufReader<File>) -> anyh
 }
 
 /// 第１節 GRIB地域差バージョン番号を読み込んで、想定しているGRIB地域差バージョン番号であるか確認する。
-fn read_section1_grib_local_table_version(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section1_grib_local_table_version(reader: &mut FileReader) -> anyhow::Result<()> {
     let value =
         read_u8(reader).map_err(|_| anyhow!("failed to read a grib local table version"))?;
     match value {
@@ -200,7 +326,7 @@ fn read_section1_grib_local_table_version(reader: &mut BufReader<File>) -> anyho
 }
 
 /// 第１節 資料の参照日時を読み込んで返却する。
-fn read_section1_referenced_at(reader: &mut BufReader<File>) -> anyhow::Result<PrimitiveDateTime> {
+fn read_section1_referenced_at(reader: &mut FileReader) -> anyhow::Result<PrimitiveDateTime> {
     // 資料の参照時刻（年）
     let year = read_u16(reader).map_err(|_| anyhow!("failed to read a reference year"))?;
     // 資料の参照時刻（月以降）
@@ -219,7 +345,7 @@ fn read_section1_referenced_at(reader: &mut BufReader<File>) -> anyhow::Result<P
 }
 
 /// 第１節 作成ステータスを読み込んで、想定している作成ステータスであるか確認する。
-fn read_section1_creation_status(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section1_creation_status(reader: &mut FileReader) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a creation status"))?;
     match value {
         CREATION_STATUS => Ok(()),
@@ -228,7 +354,7 @@ fn read_section1_creation_status(reader: &mut BufReader<File>) -> anyhow::Result
 }
 
 /// 第１節 資料の種類を読み込んで、想定している資料の種類であるか確認する。
-fn read_section1_document_kind(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section1_document_kind(reader: &mut FileReader) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a document kind"))?;
     match value {
         DOCUMENT_KIND => Ok(()),
@@ -258,7 +384,7 @@ pub struct Section3 {
 ///
 /// ファイルポインタが、第3節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第4節の開始位置に移動する。
-pub fn read_section3(reader: &mut BufReader<File>) -> anyhow::Result<Section3> {
+pub fn read_section3(reader: &mut FileReader) -> anyhow::Result<Section3> {
     // 節の長さ: 4bytes
     reader.seek_relative(4)?;
     // 節番号
@@ -322,7 +448,7 @@ pub fn read_section3(reader: &mut BufReader<File>) -> anyhow::Result<Section3> {
 }
 
 /// 第3節 格子系定義の出典を読み込んで、想定している格子系定義の出典であるか確認する。
-fn read_section3_grid_system_definition(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section3_grid_system_definition(reader: &mut FileReader) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a grid system definition"))?;
     match value {
         GRID_SYSTEM_DEFINITION => Ok(()),
@@ -333,14 +459,12 @@ fn read_section3_grid_system_definition(reader: &mut BufReader<File>) -> anyhow:
 }
 
 /// 第3節 資料点数を読み込んで、返却する。
-fn read_section3_number_of_points(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_section3_number_of_points(reader: &mut FileReader) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a number of points in section 3"))
 }
 
 /// 第3節 格子系定義テンプレート番号を読み込んで、想定している格子系定義テンプレート番号であるか確認する。
-fn read_section3_grid_system_definition_template(
-    reader: &mut BufReader<File>,
-) -> anyhow::Result<()> {
+fn read_section3_grid_system_definition_template(reader: &mut FileReader) -> anyhow::Result<()> {
     let value = read_u16(reader)
         .map_err(|_| anyhow!("failed to read a grid system definition template"))?;
     match value {
@@ -352,7 +476,7 @@ fn read_section3_grid_system_definition_template(
 }
 
 /// 第3節 地球の形状を読み込んで、想定している地球の形状であるか確認する。
-fn read_section3_earth_figure(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section3_earth_figure(reader: &mut FileReader) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a earth figure"))?;
     match value {
         EARTH_FIGURE => Ok(()),
@@ -361,7 +485,7 @@ fn read_section3_earth_figure(reader: &mut BufReader<File>) -> anyhow::Result<()
 }
 
 /// 第3節 緯線に沿った格子点数を読み込んで、想定している点数であるか確認する。
-fn read_section3_number_of_points_at_vertical(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section3_number_of_points_at_vertical(reader: &mut FileReader) -> anyhow::Result<()> {
     let value =
         read_u32(reader).map_err(|_| anyhow!("failed to read a number of points at vertical"))?;
     match value {
@@ -373,9 +497,7 @@ fn read_section3_number_of_points_at_vertical(reader: &mut BufReader<File>) -> a
 }
 
 /// 第3節 経線に沿った格子点数を読み込んで、想定している点数であるか確認する。
-fn read_section3_number_of_points_at_horizontal(
-    reader: &mut BufReader<File>,
-) -> anyhow::Result<()> {
+fn read_section3_number_of_points_at_horizontal(reader: &mut FileReader) -> anyhow::Result<()> {
     let value =
         read_u32(reader).map_err(|_| anyhow!("failed to read a number of points at horizontal"))?;
     match value {
@@ -387,7 +509,7 @@ fn read_section3_number_of_points_at_horizontal(
 }
 
 /// 第3節 原作成領域の基本角を読み込んで、想定している角度であるか確認する。
-fn read_section3_creation_range_angle(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section3_creation_range_angle(reader: &mut FileReader) -> anyhow::Result<()> {
     let value = read_u32(reader).map_err(|_| anyhow!("failed to read a creation range angle"))?;
     match value {
         CREATION_RANGE_ANGLE => Ok(()),
@@ -398,37 +520,37 @@ fn read_section3_creation_range_angle(reader: &mut BufReader<File>) -> anyhow::R
 }
 
 /// 第3節 最初の格子点の緯度を読み込んで、返却する。
-fn read_section3_northernmost_degree(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_section3_northernmost_degree(reader: &mut FileReader) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a northernmost grid point latitude"))
 }
 
 /// 第3節 最初の格子点の経度を読み込んで、返却する。
-fn read_section3_westernmost_degree(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_section3_westernmost_degree(reader: &mut FileReader) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a westernmost grid point longitude"))
 }
 
 /// 第3節 最後の格子点の緯度を読み込んで、返却する。
-fn read_section3_southernmost_degree(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_section3_southernmost_degree(reader: &mut FileReader) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a southernmost grid point latitude"))
 }
 
 /// 第3節 最後の格子点の経度を読み込んで、返却する。
-fn read_section3_easternmost_degree(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_section3_easternmost_degree(reader: &mut FileReader) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a easternmost grid point longitude"))
 }
 
 /// 第3節 i方向（経線方向）の増分を読み込んで、想定している増分か確認する。
-fn read_section3_horizontal_increment(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_section3_horizontal_increment(reader: &mut FileReader) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a horizontal increment"))
 }
 
 /// 第3節 j方向（緯線方向）の増分を読み込んで、想定している増分か確認する。
-fn read_section3_vertical_increment(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_section3_vertical_increment(reader: &mut FileReader) -> anyhow::Result<u32> {
     read_u32(reader).map_err(|_| anyhow!("failed to read a vertical increment"))
 }
 
 /// 第3節 走査モードを読み込んで、想定しているモードか確認する。
-fn read_section3_scanning_mode(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section3_scanning_mode(reader: &mut FileReader) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a scanning mode"))?;
     match value {
         SCANNING_MODE => Ok(()),
@@ -440,7 +562,7 @@ fn read_section3_scanning_mode(reader: &mut BufReader<File>) -> anyhow::Result<(
 ///
 /// ファイルポインタが、第4節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第5節の開始位置に移動する。
-pub fn read_section4(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+pub fn read_section4(reader: &mut FileReader) -> anyhow::Result<()> {
     // 第4節 節の長さを読み込み
     let length = read_u32(reader).map_err(|_| anyhow!("failed to read length of section 4"))?;
     // 節番号
@@ -462,7 +584,7 @@ pub struct Section5 {
     pub number_of_points: u32,
     /// 1データのビット数
     pub bits_per_data: u8,
-    /// 今回の圧縮に落ちいたレベルの最大値
+    /// 今回の圧縮に用いたレベルの最大値
     pub max_level_at_file: u16,
     /// レベルの最大値
     pub max_level: u16,
@@ -475,7 +597,7 @@ pub struct Section5 {
 ///
 /// ファイルポインタが、第5節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第6節の開始位置に移動する。
-pub fn read_section5(reader: &mut BufReader<File>) -> anyhow::Result<Section5> {
+pub fn read_section5(reader: &mut FileReader) -> anyhow::Result<Section5> {
     // 節の長さ
     let length = read_u32(reader).map_err(|_| anyhow!("failed to read length of section 5"))?;
     // 節番号
@@ -514,13 +636,13 @@ pub fn read_section5(reader: &mut BufReader<File>) -> anyhow::Result<Section5> {
 }
 
 /// 第5節 全資料点の数を読み込んで、返却する。
-fn read_section5_number_of_points(reader: &mut BufReader<File>) -> anyhow::Result<u32> {
+fn read_section5_number_of_points(reader: &mut FileReader) -> anyhow::Result<u32> {
     // 第5節 節番号: 1byte
     read_u32(reader).map_err(|_| anyhow!("failed to read a number of points in section 5"))
 }
 
 /// 第5節 資料表現テンプレート番号を読み込み、想定している資料表現テンプレート番号であることを確認する。
-fn read_section5_document_expression_template(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section5_document_expression_template(reader: &mut FileReader) -> anyhow::Result<()> {
     let value =
         read_u16(reader).map_err(|_| anyhow!("failed to read a document expression template"))?;
     match value {
@@ -532,7 +654,7 @@ fn read_section5_document_expression_template(reader: &mut BufReader<File>) -> a
 }
 
 /// 第5節 1データのビット数を読み込み、想定しているビット数であることを確認する。
-fn read_section5_bits_per_data(reader: &mut BufReader<File>) -> anyhow::Result<u8> {
+fn read_section5_bits_per_data(reader: &mut FileReader) -> anyhow::Result<u8> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a bits per data"))?;
     match value {
         BITS_PER_DATA => Ok(value),
@@ -541,17 +663,17 @@ fn read_section5_bits_per_data(reader: &mut BufReader<File>) -> anyhow::Result<u
 }
 
 /// 第5節 今回の圧縮に用いたレベルの最大値を読み込み、返却する。
-fn read_section5_max_level_of_this_time(reader: &mut BufReader<File>) -> anyhow::Result<u16> {
+fn read_section5_max_level_of_this_time(reader: &mut FileReader) -> anyhow::Result<u16> {
     read_u16(reader).map_err(|_| anyhow!("failed to read a max level of this time"))
 }
 
 /// 第5節 レベルの最大値を読み込み、返却する。
-fn read_section5_max_level(reader: &mut BufReader<File>) -> anyhow::Result<u16> {
+fn read_section5_max_level(reader: &mut FileReader) -> anyhow::Result<u16> {
     read_u16(reader).map_err(|_| anyhow!("failed to read a max level"))
 }
 
 /// 第5節 データ代表値の尺度因子を読み込み、想定している尺度因子であることを確認する。
-fn read_section5_data_value_factor(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+fn read_section5_data_value_factor(reader: &mut FileReader) -> anyhow::Result<()> {
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a data value factor"))?;
     match value {
         DATA_VALUE_FACTOR => Ok(()),
@@ -563,7 +685,7 @@ fn read_section5_data_value_factor(reader: &mut BufReader<File>) -> anyhow::Resu
 ///
 /// ファイルポインタが、第5節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第6節の開始位置に移動する。
-pub fn read_section6(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+pub fn read_section6(reader: &mut FileReader) -> anyhow::Result<()> {
     // 節の長さ: 4bytes
     reader.seek_relative(4)?;
     // 節番号
@@ -577,25 +699,8 @@ pub fn read_section6(reader: &mut BufReader<File>) -> anyhow::Result<()> {
     reader.seek_relative(1).map_err(|e| e.into())
 }
 
-/// 第7節を読み込んで、確認する。
-pub fn read_section7(reader: &mut BufReader<File>) -> anyhow::Result<()> {
-    // 節の長さ: 4bytes
-    let length = read_u32(reader).map_err(|_| anyhow!("failed to read length of section 7"))?;
-    // 節番号
-    let section_number =
-        read_u8(reader).map_err(|_| anyhow!("failed to read section number at section 7"))?;
-    if section_number != 7 {
-        return Err(anyhow!("section number is miss match in section 7"));
-    }
-
-    // TODO: ランレングス圧縮オクテット列をスキップ
-    reader
-        .seek_relative((length - (4 + 1)) as i64)
-        .map_err(|e| e.into())
-}
-
 /// 第8節を読み込んで、確認する。
-pub fn read_section8(reader: &mut BufReader<File>) -> anyhow::Result<()> {
+pub fn read_section8(reader: &mut FileReader) -> anyhow::Result<()> {
     let mut buf = [0; 4];
     let size = reader
         .read(&mut buf)
@@ -669,9 +774,15 @@ pub fn read_section8(reader: &mut BufReader<File>) -> anyhow::Result<()> {
 /// # 戻り値
 ///
 /// レベルとレベルの数を格納したタプル。
-fn expand_run_length(values: &[u8], maxv: u16, lngu: u16) -> (u8, u64) {
-    assert!(2 <= values.len());
+fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u64) {
+    assert!(values[0] <= maxv, "values[0]={}, maxv={}", values[0], maxv);
 
+    // ランレングス圧縮されていない場合
+    if values.len() == 1 {
+        return (values[0], 1);
+    }
+
+    // ランレングス圧縮を展開
     let mut count: u64 = 0;
     let values: Vec<u64> = values.iter().map(|v| *v as u64).collect();
     let lngu = lngu as u64;
@@ -680,7 +791,7 @@ fn expand_run_length(values: &[u8], maxv: u16, lngu: u16) -> (u8, u64) {
         count += lngu.pow(i - 1) * (values[i as usize] - (maxv + 1));
     }
 
-    (values[0] as u8, count + 1)
+    (values[0] as u16, count + 1)
 }
 
 #[cfg(test)]
@@ -696,9 +807,11 @@ mod tests {
         let mut reader = BufReader::new(File::open(SAMPLE_FILE).unwrap());
         // 第0節を読み込み
         assert!(read_section0(&mut reader).is_ok());
+
         // 第1節を読み込み
         let section1 = read_section1(&mut reader).unwrap();
         assert_eq!(section1.referenced_at, datetime!(2020-07-07 00:00:00));
+
         // 第3節を読み込み
         let section3 = read_section3(&mut reader).unwrap();
         assert_eq!(section3.number_of_points, 2560 * 3360);
@@ -708,8 +821,10 @@ mod tests {
         assert_eq!(section3.easternmost, 149993750);
         assert_eq!(section3.horizontal_increment, 12500);
         assert_eq!(section3.vertical_increment, 8333);
+
         // 第4節を読み飛ばす
         assert!(read_section4(&mut reader).is_ok());
+
         // 第5節を読み込み
         let section5 = read_section5(&mut reader).unwrap();
         assert_eq!(section5.number_of_points, 8601600);
@@ -718,10 +833,19 @@ mod tests {
         assert_eq!(section5.max_level, 98);
         assert!(section5.max_level_at_file <= section5.max_level);
         assert_eq!(section5.level_values, sample_level_values());
+
         // 第6節を読み込み
         assert!(read_section6(&mut reader).is_ok());
+
         // 第7節を読み込み
-        assert!(read_section7(&mut reader).is_ok());
+        // 節の長さ: 4bytes
+        let length = read_u32(&mut reader).unwrap();
+        // 節番号
+        let section_number = read_u8(&mut reader).unwrap();
+        assert_eq!(section_number, 7);
+        // ランレングス圧縮オクテット列をスキップ
+        reader.seek_relative((length - (4 + 1)) as i64).unwrap();
+
         // 第8節を読み込み
         assert!(read_section8(&mut reader).is_ok());
     }
@@ -738,32 +862,42 @@ mod tests {
     }
 
     #[test]
-    fn expand_one_run_length() {
+    fn expand_run_length0() {
         let nbit = 4;
         let maxv = 10;
         let lngu = 2u16.pow(nbit) - 1 - maxv;
-        let values = vec![9u8, 12];
-        let expected = (9u8, 2u64);
+        let values = vec![3u16];
+        let expected = (3u16, 1u64);
         assert_eq!(expected, expand_run_length(&values, maxv, lngu));
     }
 
     #[test]
-    fn expand_one_run_length2() {
+    fn expand_run_length1() {
         let nbit = 4;
         let maxv = 10;
         let lngu = 2u16.pow(nbit) - 1 - maxv;
-        let values = vec![4u8, 15];
-        let expected = (4u8, 5u64);
+        let values = vec![9u16, 12];
+        let expected = (9u16, 2u64);
         assert_eq!(expected, expand_run_length(&values, maxv, lngu));
     }
 
     #[test]
-    fn expand_two_run_length2() {
+    fn expand_run_length2() {
         let nbit = 4;
         let maxv = 10;
         let lngu = 2u16.pow(nbit) - 1 - maxv;
-        let values = vec![0u8, 13, 12];
-        let expected = (0u8, 8u64);
+        let values = vec![4u16, 15];
+        let expected = (4u16, 5u64);
+        assert_eq!(expected, expand_run_length(&values, maxv, lngu));
+    }
+
+    #[test]
+    fn expand_run_length3() {
+        let nbit = 4;
+        let maxv = 10;
+        let lngu = 2u16.pow(nbit) - 1 - maxv;
+        let values = vec![0u16, 13, 12];
+        let expected = (0u16, 8u64);
         assert_eq!(expected, expand_run_length(&values, maxv, lngu));
     }
 }
