@@ -50,6 +50,7 @@ pub struct Grib2Csv {
     section5: Section5,
 }
 
+#[derive(Default)]
 pub struct Boundary {
     northernmost: Option<u32>,
     southernmost: Option<u32>,
@@ -171,7 +172,8 @@ impl Grib2Csv {
     /// # 引数
     ///
     /// * `path` - 変換後のデータを記録するCSV形式のファイルのパス。
-    pub fn convert<P: AsRef<Path>>(&self, path: P) -> anyhow::Result<()> {
+    /// * `boundary` - CSVファイルに出力する格子点の境界。
+    pub fn convert<P: AsRef<Path>>(&self, path: P, boundary: Boundary) -> anyhow::Result<()> {
         // CSVファイルを作成して、ヘッダを出力
         let file = OpenOptions::new()
             .write(true)
@@ -208,7 +210,14 @@ impl Grib2Csv {
                 let (level, count) = expand_run_length(&run_length, maxv, lngu);
                 number_of_read += count;
                 // レベル値を物理値に変換して書き込み
-                self.output_values(&mut writer, level, count, &mut longitude, &mut latitude)?;
+                self.output_values(
+                    &mut writer,
+                    level,
+                    count,
+                    &mut longitude,
+                    &mut latitude,
+                    &boundary,
+                )?;
                 run_length.clear();
             }
             run_length.push(value);
@@ -216,7 +225,14 @@ impl Grib2Csv {
         if !run_length.is_empty() {
             let (level, count) = expand_run_length(&run_length, maxv, lngu);
             number_of_read += count;
-            self.output_values(&mut writer, level, count, &mut longitude, &mut latitude)?;
+            self.output_values(
+                &mut writer,
+                level,
+                count,
+                &mut longitude,
+                &mut latitude,
+                &boundary,
+            )?;
         }
         writer.flush()?;
         if number_of_read != self.section3.number_of_points {
@@ -239,16 +255,19 @@ impl Grib2Csv {
         count: u32,
         longitude: &mut u32,
         latitude: &mut u32,
+        boundary: &Boundary,
     ) -> anyhow::Result<()> {
         if 0 < level {
             for _ in 0..count {
-                writeln!(
-                    writer,
-                    "{:.6},{:.6},{}",
-                    (*longitude as f64) / 1_000_000f64,
-                    (*latitude as f64) / 1_000_000f64,
-                    self.section5.level_values[(level - 1) as usize],
-                )?;
+                if boundary.contains(*longitude, *latitude) {
+                    writeln!(
+                        writer,
+                        "{:.6},{:.6},{}",
+                        (*longitude as f64) / 1_000_000f64,
+                        (*latitude as f64) / 1_000_000f64,
+                        self.section5.level_values[(level - 1) as usize],
+                    )?;
+                }
                 *longitude += self.section3.horizontal_increment;
                 if self.section3.easternmost < *longitude {
                     *longitude = self.section3.westernmost;
@@ -256,7 +275,7 @@ impl Grib2Csv {
                 }
             }
         } else {
-            // レベル0は出力しない
+            // レベル0は、欠測値であるため、出力しない
             for _ in 0..count {
                 *longitude += self.section3.horizontal_increment;
                 if self.section3.easternmost < *longitude {
@@ -884,8 +903,9 @@ fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u32) {
 mod tests {
     use super::*;
 
-    const SAMPLE_FILE: &'static str = "fixtures/20200707000000_grib2.bin";
-    const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 73;
+    const SAMPLE_FILE: &'static str =
+        "fixtures/Z__C_RJTD_20200707073000_SRF_GPV_Ggis1km_Prr60lv_ANAL_grib2.bin";
+    const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 77;
 
     #[test]
     fn can_read_grib_file() {
