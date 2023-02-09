@@ -72,6 +72,13 @@ impl Grib2Csv {
         read_section4(&mut reader)?;
         // 第5節を読み込み
         let section5 = read_section5(&mut reader)?;
+        if section3.number_of_points != section5.number_of_points {
+            return Err(anyhow!(
+                "the number of points is different (section3:{}, section5:{})",
+                section3.number_of_points,
+                section5.number_of_points
+            ));
+        }
         // 第6節を読み込み
         read_section6(&mut reader)?;
 
@@ -117,10 +124,13 @@ impl Grib2Csv {
         let mut run_length = Vec::new();
         let mut longitude = self.section3.westernmost;
         let mut latitude = self.section3.northernmost;
+        let mut number_of_read = 0u32; // 読み込んだ格子点の数
         for _ in 0..section_bytes - (4 + 1) {
             let value = (read_u8(&mut reader)?) as u16;
             if value <= maxv && !run_length.is_empty() {
+                // ランレングス符号を展開
                 let (level, count) = expand_run_length(&run_length, maxv, lngu);
+                number_of_read += count;
                 // レベル値を物理値に変換して書き込み
                 self.output_values(&mut writer, level, count, &mut longitude, &mut latitude)?;
                 run_length.clear();
@@ -129,11 +139,17 @@ impl Grib2Csv {
         }
         if !run_length.is_empty() {
             let (level, count) = expand_run_length(&run_length, maxv, lngu);
-            // レベル値を物理値に変換して書き込み
+            number_of_read += count;
             self.output_values(&mut writer, level, count, &mut longitude, &mut latitude)?;
         }
         writer.flush()?;
-
+        if number_of_read != self.section3.number_of_points {
+            return Err(anyhow!(
+                "failed to read points (expected:{}, read:{})",
+                self.section3.number_of_points,
+                number_of_read
+            ));
+        }
         // 第8節を読み込み
         read_section8(&mut reader)?;
 
@@ -144,7 +160,7 @@ impl Grib2Csv {
         &self,
         writer: &mut FileWriter,
         level: u16,
-        count: u64,
+        count: u32,
         longitude: &mut u32,
         latitude: &mut u32,
     ) -> anyhow::Result<()> {
@@ -774,7 +790,7 @@ pub fn read_section8(reader: &mut FileReader) -> anyhow::Result<()> {
 /// # 戻り値
 ///
 /// レベルとレベルの数を格納したタプル。
-fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u64) {
+fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u32) {
     assert!(values[0] <= maxv, "values[0]={}, maxv={}", values[0], maxv);
 
     // ランレングス圧縮されていない場合
@@ -783,10 +799,10 @@ fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u64) {
     }
 
     // ランレングス圧縮を展開
-    let mut count: u64 = 0;
-    let values: Vec<u64> = values.iter().map(|v| *v as u64).collect();
-    let lngu = lngu as u64;
-    let maxv = maxv as u64;
+    let mut count: u32 = 0;
+    let values: Vec<u32> = values.iter().map(|v| *v as u32).collect();
+    let lngu = lngu as u32;
+    let maxv = maxv as u32;
     for i in 1u32..values.len() as u32 {
         count += lngu.pow(i - 1) * (values[i as usize] - (maxv + 1));
     }
@@ -867,7 +883,7 @@ mod tests {
         let maxv = 10;
         let lngu = 2u16.pow(nbit) - 1 - maxv;
         let values = vec![3u16];
-        let expected = (3u16, 1u64);
+        let expected = (3u16, 1u32);
         assert_eq!(expected, expand_run_length(&values, maxv, lngu));
     }
 
@@ -877,7 +893,7 @@ mod tests {
         let maxv = 10;
         let lngu = 2u16.pow(nbit) - 1 - maxv;
         let values = vec![9u16, 12];
-        let expected = (9u16, 2u64);
+        let expected = (9u16, 2u32);
         assert_eq!(expected, expand_run_length(&values, maxv, lngu));
     }
 
@@ -887,7 +903,7 @@ mod tests {
         let maxv = 10;
         let lngu = 2u16.pow(nbit) - 1 - maxv;
         let values = vec![4u16, 15];
-        let expected = (4u16, 5u64);
+        let expected = (4u16, 5u32);
         assert_eq!(expected, expand_run_length(&values, maxv, lngu));
     }
 
@@ -897,7 +913,7 @@ mod tests {
         let maxv = 10;
         let lngu = 2u16.pow(nbit) - 1 - maxv;
         let values = vec![0u16, 13, 12];
-        let expected = (0u16, 8u64);
+        let expected = (0u16, 8u32);
         assert_eq!(expected, expand_run_length(&values, maxv, lngu));
     }
 }
