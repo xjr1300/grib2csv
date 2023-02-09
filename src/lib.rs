@@ -1004,4 +1004,43 @@ mod tests {
         let expected = (0u16, 8u32);
         assert_eq!(expected, expand_run_length(&values, maxv, lngu));
     }
+
+    #[test]
+    fn should_be_contained_by_boundary() {
+        let boundary = Boundary {
+            northernmost: Some(36000000),
+            southernmost: Some(35000000),
+            westernmost: Some(135000000),
+            easternmost: Some(136000000),
+        };
+        let coordinates = vec![
+            (135000000, 36000000),
+            (136000000, 36000000),
+            (135000000, 35000000),
+            (136000000, 35000000),
+            (135500000, 35500000),
+        ];
+        for dataset in coordinates {
+            assert!(boundary.contains(dataset.0, dataset.1), "{:?}", dataset);
+        }
+    }
+
+    #[test]
+    fn should_be_not_contained_by_boundary() {
+        let boundary = Boundary {
+            northernmost: Some(36000000),
+            southernmost: Some(35000000),
+            westernmost: Some(135000000),
+            easternmost: Some(136000000),
+        };
+        let coordinates = vec![
+            (134900000, 36000000),
+            (135000000, 36100000),
+            (136100000, 36000000),
+            (135000000, 34900000),
+        ];
+        for dataset in coordinates {
+            assert!(!boundary.contains(dataset.0, dataset.1), "{:?}", dataset);
+        }
+    }
 }
