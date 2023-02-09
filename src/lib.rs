@@ -43,11 +43,89 @@ const BITS_PER_DATA: u8 = 8;
 /// 第5節 データ代表値の尺度因子
 const DATA_VALUE_FACTOR: u8 = 1;
 
+/// GRIB2ファイル・コンバーター
 pub struct Grib2Csv {
     reader: RefCell<FileReader>,
-    pub section1: Section1,
-    pub section3: Section3,
-    pub section5: Section5,
+    section3: Section3,
+    section5: Section5,
+}
+
+#[derive(Default)]
+pub struct Boundary {
+    northernmost: Option<u32>,
+    southernmost: Option<u32>,
+    westernmost: Option<u32>,
+    easternmost: Option<u32>,
+}
+
+impl Boundary {
+    fn contains(&self, longitude: u32, latitude: u32) -> bool {
+        if let Some(northernmost) = self.northernmost {
+            if northernmost < latitude {
+                return false;
+            }
+        }
+        if let Some(southernmost) = self.southernmost {
+            if latitude < southernmost {
+                return false;
+            }
+        }
+        if let Some(westernmost) = self.westernmost {
+            if longitude < westernmost {
+                return false;
+            }
+        }
+        if let Some(easternmost) = self.easternmost {
+            if easternmost < longitude {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+#[derive(Default)]
+pub struct BoundaryBuilder {
+    northernmost: Option<u32>,
+    southernmost: Option<u32>,
+    westernmost: Option<u32>,
+    easternmost: Option<u32>,
+}
+
+impl BoundaryBuilder {
+    pub fn northernmost(mut self, degree: Option<u32>) -> Self {
+        self.northernmost = degree;
+
+        self
+    }
+
+    pub fn southernmost(mut self, degree: Option<u32>) -> Self {
+        self.southernmost = degree;
+
+        self
+    }
+
+    pub fn westernmost(mut self, degree: Option<u32>) -> Self {
+        self.westernmost = degree;
+
+        self
+    }
+
+    pub fn easternmost(mut self, degree: Option<u32>) -> Self {
+        self.easternmost = degree;
+
+        self
+    }
+
+    pub fn build(self) -> Boundary {
+        Boundary {
+            northernmost: self.northernmost,
+            southernmost: self.southernmost,
+            westernmost: self.westernmost,
+            easternmost: self.easternmost,
+        }
+    }
 }
 
 impl Grib2Csv {
@@ -65,7 +143,7 @@ impl Grib2Csv {
         // 第0節を読み込み
         read_section0(&mut reader)?;
         // 第1節を読み込み
-        let section1 = read_section1(&mut reader)?;
+        read_section1(&mut reader)?;
         // 第3節を読み込み
         let section3 = read_section3(&mut reader)?;
         // 第4節を読み込み
@@ -84,7 +162,6 @@ impl Grib2Csv {
 
         Ok(Self {
             reader: RefCell::new(reader),
-            section1,
             section3,
             section5,
         })
@@ -95,7 +172,8 @@ impl Grib2Csv {
     /// # 引数
     ///
     /// * `path` - 変換後のデータを記録するCSV形式のファイルのパス。
-    pub fn convert<P: AsRef<Path>>(&self, path: P) -> anyhow::Result<()> {
+    /// * `boundary` - CSVファイルに出力する格子点の境界。
+    pub fn convert<P: AsRef<Path>>(&self, path: P, boundary: Boundary) -> anyhow::Result<()> {
         // CSVファイルを作成して、ヘッダを出力
         let file = OpenOptions::new()
             .write(true)
@@ -132,7 +210,14 @@ impl Grib2Csv {
                 let (level, count) = expand_run_length(&run_length, maxv, lngu);
                 number_of_read += count;
                 // レベル値を物理値に変換して書き込み
-                self.output_values(&mut writer, level, count, &mut longitude, &mut latitude)?;
+                self.output_values(
+                    &mut writer,
+                    level,
+                    count,
+                    &mut longitude,
+                    &mut latitude,
+                    &boundary,
+                )?;
                 run_length.clear();
             }
             run_length.push(value);
@@ -140,7 +225,14 @@ impl Grib2Csv {
         if !run_length.is_empty() {
             let (level, count) = expand_run_length(&run_length, maxv, lngu);
             number_of_read += count;
-            self.output_values(&mut writer, level, count, &mut longitude, &mut latitude)?;
+            self.output_values(
+                &mut writer,
+                level,
+                count,
+                &mut longitude,
+                &mut latitude,
+                &boundary,
+            )?;
         }
         writer.flush()?;
         if number_of_read != self.section3.number_of_points {
@@ -163,16 +255,19 @@ impl Grib2Csv {
         count: u32,
         longitude: &mut u32,
         latitude: &mut u32,
+        boundary: &Boundary,
     ) -> anyhow::Result<()> {
         if 0 < level {
             for _ in 0..count {
-                writeln!(
-                    writer,
-                    "{:.6},{:.6},{}",
-                    (*longitude as f64) / 1_000_000f64,
-                    (*latitude as f64) / 1_000_000f64,
-                    self.section5.level_values[(level - 1) as usize],
-                )?;
+                if boundary.contains(*longitude, *latitude) {
+                    writeln!(
+                        writer,
+                        "{:.6},{:.6},{}",
+                        (*longitude as f64) / 1_000_000f64,
+                        (*latitude as f64) / 1_000_000f64,
+                        self.section5.level_values[(level - 1) as usize],
+                    )?;
+                }
                 *longitude += self.section3.horizontal_increment;
                 if self.section3.easternmost < *longitude {
                     *longitude = self.section3.westernmost;
@@ -180,7 +275,7 @@ impl Grib2Csv {
                 }
             }
         } else {
-            // レベル0は出力しない
+            // レベル0は、欠測値であるため、出力しない
             for _ in 0..count {
                 *longitude += self.section3.horizontal_increment;
                 if self.section3.easternmost < *longitude {
@@ -278,18 +373,12 @@ fn read_section0_grib_version(reader: &mut FileReader) -> anyhow::Result<()> {
     }
 }
 
-/// 第1節情報
-pub struct Section1 {
-    /// 資料の参照時刻（日時）
-    pub referenced_at: PrimitiveDateTime,
-}
-
-/// 第1節を読み込んで、第1節の情報を返却する。
+/// 第1節を読み込んで、確認する。
 ///
 /// ファイルポインタが、第1節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第3節の開始位置に移動する。
 /// なお、実装時点で、第2節は省略されている。
-pub fn read_section1(reader: &mut FileReader) -> anyhow::Result<Section1> {
+pub fn read_section1(reader: &mut FileReader) -> anyhow::Result<()> {
     // 節の長さ: 4bytes
     reader.seek_relative(4)?;
     // 節番号
@@ -308,13 +397,13 @@ pub fn read_section1(reader: &mut FileReader) -> anyhow::Result<Section1> {
     // 参照時刻の意味: 1byte
     reader.seek_relative(1)?;
     // 資料の参照時刻（日時）
-    let referenced_at = read_section1_referenced_at(reader)?;
+    read_section1_referenced_at(reader)?;
     // 作成ステータス
     read_section1_creation_status(reader)?;
     // 資料の種類
     read_section1_document_kind(reader)?;
 
-    Ok(Section1 { referenced_at })
+    Ok(())
 }
 
 /// 第１節 GRIBマスター表バージョン番号を読み込んで、想定しているGRIBマスター表バージョン番号であるか確認する。
@@ -365,7 +454,7 @@ fn read_section1_creation_status(reader: &mut FileReader) -> anyhow::Result<()> 
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a creation status"))?;
     match value {
         CREATION_STATUS => Ok(()),
-        _ => Err(anyhow!("a creation status is not {CREATION_STATUS}")),
+        _ => Err(anyhow!("a creation status is test product")),
     }
 }
 
@@ -813,10 +902,10 @@ fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use time::macros::datetime;
 
-    const SAMPLE_FILE: &'static str = "fixtures/20200707000000_grib2.bin";
-    const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 73;
+    const SAMPLE_FILE: &'static str =
+        "fixtures/Z__C_RJTD_20200707073000_SRF_GPV_Ggis1km_Prr60lv_ANAL_grib2.bin";
+    const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 77;
 
     #[test]
     fn can_read_grib_file() {
@@ -825,8 +914,7 @@ mod tests {
         assert!(read_section0(&mut reader).is_ok());
 
         // 第1節を読み込み
-        let section1 = read_section1(&mut reader).unwrap();
-        assert_eq!(section1.referenced_at, datetime!(2020-07-07 00:00:00));
+        assert!(read_section1(&mut reader).is_ok());
 
         // 第3節を読み込み
         let section3 = read_section3(&mut reader).unwrap();

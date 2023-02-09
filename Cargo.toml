@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.69"
+clap = { version = "4.1.4", features = ["derive"] }
 time = { version = "0.3.17", features = ["parsing", "macros"] }
