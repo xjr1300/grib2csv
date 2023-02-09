@@ -454,7 +454,7 @@ fn read_section1_creation_status(reader: &mut FileReader) -> anyhow::Result<()> 
     let value = read_u8(reader).map_err(|_| anyhow!("failed to read a creation status"))?;
     match value {
         CREATION_STATUS => Ok(()),
-        _ => Err(anyhow!("a creation status is not {CREATION_STATUS}")),
+        _ => Err(anyhow!("a creation status is test product")),
     }
 }
 
