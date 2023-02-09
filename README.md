@@ -94,6 +94,7 @@ git clone git@github.com:xjr1300/grib2csv.git
 ### grib2csvのコンパイル
 
 1. `grib2csv`のソースコードをクローンした後、`grib2csv`ディレクトリに移動して、コンパイルします。
+    * `Rust`を新規にインストールした場合、クレート情報を更新するため、少し時間がかかります。
     * `grib2csv`実行形式ファイルは、`./target/release/grib2csv.exe`に出力されます。
 
 ```bash
