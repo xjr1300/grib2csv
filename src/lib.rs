@@ -909,8 +909,7 @@ fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u32) {
 mod tests {
     use super::*;
 
-    const SAMPLE_FILE: &'static str =
-        "fixtures/Z__C_RJTD_20200707073000_SRF_GPV_Ggis1km_Prr60lv_ANAL_grib2.bin";
+    const SAMPLE_FILE: &'static str = "fixtures/sample.bin";
     const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 77;
 
     #[test]
