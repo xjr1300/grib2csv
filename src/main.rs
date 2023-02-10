@@ -12,7 +12,7 @@ use grib2csv::{BoundaryBuilder, Grib2Csv};
 )]
 struct Args {
     /// 入力GRIB2ファイル
-    #[arg(help = "input grib file")]
+    #[arg(help = "入力GRIB2ファイルのパス")]
     input: String,
 
     /// CSVファイルに出力する格子点の最北端の緯度
@@ -40,7 +40,7 @@ struct Args {
     no_header: bool,
 
     /// 出力CSVファイル
-    #[arg(help = "output csv file")]
+    #[arg(help = "出力CSVファイルのパス")]
     output: String,
 }
 
