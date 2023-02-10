@@ -1,6 +1,6 @@
 # grib2csv
 
-GRIB2通報式による1kmメッシュ解析雨量または降水短時間予報データを、CSV形式のファイルに変換します。
+`GRIB2`通報式による1kmメッシュ解析雨量または降水短時間予報データを、CSV形式のファイルに変換します。
 
 ## 1. 使用方法
 
@@ -31,7 +31,7 @@ grib2csv [OPTIONS] <INPUT> <OUTPUT>
 
 `-n`オプションなど出力する格子点の範囲を指定する場合、指定したい度単位の緯度や経度を1,000,000倍したときの整数部を指定してください。
 
-### 1.4. 使用例
+### [1.4. 使用例](#14-使用例)
 
 ```bash
 # 入力ファイルに記録されているすべての格子点を、CSVファイルに出力
@@ -51,7 +51,7 @@ grib2csv -s 35000000 -w 135000000 input.bin output.csv
 
 ## 3. Windowsでソースコードをコンパイルする
 
-> `Ubuntu`など`Linux`系または`macOS`などで、`grib2csv`をコンパイルする方法は、`Windows`の説明で理解できると思います。
+> `Linux`系OSや`macOS`でコンパイルする方法は簡単なため、`Windows`でコンパイルする方法のみ説明します。
 
 ### 3.1. Microsoft C++ Build Toolのインストール
 
@@ -78,7 +78,7 @@ grib2csv -s 35000000 -w 135000000 input.bin output.csv
 1. `Rust`のインストーラーを[ここから](https://static.rust-lang.org/dist/rust-1.67.0-x86_64-pc-windows-msvc.msi)ダウンロードします。
 2. `Rust`のインストーラーを実行します。
 3. `コマンド・プロンプト`または`PowerShell`を起動して、以下のコマンドを打ちます。
-   * バージョン番号が表示されたら、正常にRustをインストールできています。
+   * `Rust`のバージョン番号が表示されれば、インストールに成功しています。
 
 ```bash
 rustc --version
@@ -111,8 +111,8 @@ cargo build --release
 
 #### 3.4.3. grib2csvの実行
 
-1. `PATH`環境変数に`./target/release/`追加するか、`PATH`環境変数追加されているディレクトリに`grib2csv.exe`をコピー／移動します。
-2. `grib2csv.exe`を実行します。
+1. `PATH`環境変数に`./target/release/`追加するか、`PATH`環境変数追加されているディレクトリに`grib2csv.exe`をコピーまたは移動します。
+2. [1.4. 使用例](#14-使用例)の通り、`grib2csv.exe`を実行します。
 
 > `PATH`環境変数の確認及び設定は、[ここ](https://atmarkit.itmedia.co.jp/ait/articles/1805/11/news035.html)を参照してください。
 
