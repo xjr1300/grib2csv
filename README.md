@@ -19,6 +19,7 @@ grib2csv [OPTIONS] <INPUT> <OUTPUT>
 * `-s`, `--southernmost` `<SOUTHERNMOST>` - CSVファイルに出力する格子点の最南端の緯度(例: 35432213)
 * `-w`, `--westernmost` `<WESTERNMOST>` - CSVファイルに出力する格子点の最西端の経度(例: 135532213)
 * `-e`, `--easternmost` `<EASTERNMOST>` - CSVファイルに出力する格子点の最東端の経度(例: 136532213)
+* `--no-header` - CSVファイルにヘッダを出力しない
 * `-h`, `--help` - ヘルプを出力
 * `-v`, `--version` - バージョンを出力
 
@@ -113,3 +114,12 @@ cargo test
 # 統合テスト
 cargo test -- --ignored
 ```
+
+## 5. 改訂履歴
+
+* 0.0.1
+  * 2023-02-09 リリース
+* 0.0.2
+  * 2023-02-10 リリース
+  * ヘルプやREADMEを修正
+  * `--no-header`引数を追加
