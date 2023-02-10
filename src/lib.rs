@@ -48,6 +48,7 @@ pub struct Grib2Csv {
     reader: RefCell<FileReader>,
     section3: Section3,
     section5: Section5,
+    with_header: bool,
 }
 
 #[derive(Default)]
@@ -134,11 +135,12 @@ impl Grib2Csv {
     /// # 引数
     ///
     /// * `path` - grib2ファイルのパス。
+    /// * `with_header` - ヘッダ出力フラグ。
     ///
     /// # 戻り値
     ///
     /// GRIB2Infoインスタンス。
-    pub fn new<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+    pub fn new<P: AsRef<Path>>(path: P, with_header: bool) -> anyhow::Result<Self> {
         let mut reader = BufReader::new(File::open(path.as_ref())?);
         // 第0節を読み込み
         read_section0(&mut reader)?;
@@ -164,6 +166,7 @@ impl Grib2Csv {
             reader: RefCell::new(reader),
             section3,
             section5,
+            with_header,
         })
     }
 
@@ -180,7 +183,10 @@ impl Grib2Csv {
             .create(true)
             .open(path.as_ref())?;
         let mut writer = BufWriter::new(file);
-        writeln!(writer, "longitude,latitude,value")?;
+        // ヘッダ出力
+        if self.with_header {
+            writeln!(writer, "longitude,latitude,value")?;
+        }
 
         // 第7節を読み込み、ランレングス圧縮オクテット列の直前まで読み込み
         let mut reader = self.reader.borrow_mut();
@@ -268,19 +274,19 @@ impl Grib2Csv {
                         self.section5.level_values[(level - 1) as usize],
                     )?;
                 }
-                *longitude += self.section3.horizontal_increment;
+                *longitude += self.section3.longitude_increment;
                 if self.section3.easternmost < *longitude {
                     *longitude = self.section3.westernmost;
-                    *latitude -= self.section3.vertical_increment;
+                    *latitude -= self.section3.latitude_increment;
                 }
             }
         } else {
             // レベル0は、欠測値であるため、出力しない
             for _ in 0..count {
-                *longitude += self.section3.horizontal_increment;
+                *longitude += self.section3.longitude_increment;
                 if self.section3.easternmost < *longitude {
                     *longitude = self.section3.westernmost;
-                    *latitude -= self.section3.vertical_increment;
+                    *latitude -= self.section3.latitude_increment;
                 }
             }
         }
@@ -480,9 +486,9 @@ pub struct Section3 {
     /// 最後（最も右下）の格子点の経度（10^6度単位）
     pub easternmost: u32,
     /// i方向（経線方向）の増分（10^6度単位）
-    pub horizontal_increment: u32,
+    pub longitude_increment: u32,
     /// j方向（緯線方向）の増分（10^6度単位）
-    pub vertical_increment: u32,
+    pub latitude_increment: u32,
 }
 
 /// 第3節を読み込んで、第3節の情報を返却する。
@@ -547,8 +553,8 @@ pub fn read_section3(reader: &mut FileReader) -> anyhow::Result<Section3> {
         westernmost,
         southernmost,
         easternmost,
-        horizontal_increment,
-        vertical_increment,
+        longitude_increment: horizontal_increment,
+        latitude_increment: vertical_increment,
     })
 }
 
@@ -923,8 +929,8 @@ mod tests {
         assert_eq!(section3.westernmost, 118006250);
         assert_eq!(section3.southernmost, 20004167);
         assert_eq!(section3.easternmost, 149993750);
-        assert_eq!(section3.horizontal_increment, 12500);
-        assert_eq!(section3.vertical_increment, 8333);
+        assert_eq!(section3.longitude_increment, 12500);
+        assert_eq!(section3.latitude_increment, 8333);
 
         // 第4節を読み飛ばす
         assert!(read_section4(&mut reader).is_ok());
@@ -1003,5 +1009,44 @@ mod tests {
         let values = vec![0u16, 13, 12];
         let expected = (0u16, 8u32);
         assert_eq!(expected, expand_run_length(&values, maxv, lngu));
+    }
+
+    #[test]
+    fn should_be_contained_by_boundary() {
+        let boundary = Boundary {
+            northernmost: Some(36000000),
+            southernmost: Some(35000000),
+            westernmost: Some(135000000),
+            easternmost: Some(136000000),
+        };
+        let coordinates = vec![
+            (135000000, 36000000),
+            (136000000, 36000000),
+            (135000000, 35000000),
+            (136000000, 35000000),
+            (135500000, 35500000),
+        ];
+        for dataset in coordinates {
+            assert!(boundary.contains(dataset.0, dataset.1), "{:?}", dataset);
+        }
+    }
+
+    #[test]
+    fn should_be_not_contained_by_boundary() {
+        let boundary = Boundary {
+            northernmost: Some(36000000),
+            southernmost: Some(35000000),
+            westernmost: Some(135000000),
+            easternmost: Some(136000000),
+        };
+        let coordinates = vec![
+            (134900000, 36000000),
+            (135000000, 36100000),
+            (136100000, 36000000),
+            (135000000, 34900000),
+        ];
+        for dataset in coordinates {
+            assert!(!boundary.contains(dataset.0, dataset.1), "{:?}", dataset);
+        }
     }
 }
