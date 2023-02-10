@@ -108,6 +108,8 @@ cargo build --release
 1. `PATH`環境変数に`./target/release/`追加するか、`PATH`環境変数追加されているディレクトリに`grib2csv.exe`をコピー／移動します。
 2. `grib2csv.exe`を実行します。
 
+> `PATH`環境変数の確認及び設定は、[ここ](https://atmarkit.itmedia.co.jp/ait/articles/1805/11/news035.html)を参照してください。
+
 ## 4. テスト
 
 ```bash
