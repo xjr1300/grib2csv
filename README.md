@@ -66,7 +66,10 @@ cargo test -- --ignored
 
 1. `Git`のインストーラーを[ここから](https://github.com/git-for-windows/git/releases/download/v2.39.1.windows.1/Git-2.39.1-64-bit.exe)ダウンロードします。
 2. `Git`のインストーラーを実行します。
-3. [ここ](https://prog-8.com/docs/git-env-win)を参考に、`Git`をインストールします。
+3. [ここ](https://www.curict.com/item/60/60bfe0e.html)を参考に、`Git`をインストールします。
+    * `Select Components`では、デフォルトで`Next`ボタンをクリックします。
+    * `Choosing the default editor used by Git`では、`Use Vim ...`を選択して、`Next`ボタンをクリックします。
+    * `Adjusting the name of the initial branch in new repositories`では、`Override the default branch name for new repositories`をチェックして、テキストに`main`を入力して、`Next`ボタンをクリックします。
 
 ## Rustのインストール
 
