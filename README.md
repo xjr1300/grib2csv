@@ -2,47 +2,51 @@
 
 GRIB2通報式による1kmメッシュ解析雨量または降水短時間予報データを、CSV形式のファイルに変換します。
 
-## 使用方法
+## 1. 使用方法
 
 ```bash
 grib2csv [OPTIONS] <INPUT> <OUTPUT>
 ```
 
-## 実行例
-
-```bash
-grib2csv -n 36000000 -s 35000000 -w 135000000 -e 136000000 input.bin output.csv
-```
-
-## 引数
+### 1.1. 必須引数
 
 * `<INPUT>` - 変換するGRIB2ファイルのパス。
-* `<OUTPUT>` - 変換した結果を出力するCSV形式のパス。
+* `<OUTPUT>` - 変換した結果を出力するCSVファイルのパス。
 
-## オプション
+### 1.2. オプション引数
 
 * `-n`, `--northernmost` `<NORTHERNMOST>` - CSVファイルに出力する格子点の最北端の緯度(例: 36532213)
 * `-s`, `--southernmost` `<SOUTHERNMOST>` - CSVファイルに出力する格子点の最南端の緯度(例: 35432213)
 * `-w`, `--westernmost` `<WESTERNMOST>` - CSVファイルに出力する格子点の最西端の経度(例: 135532213)
 * `-e`, `--easternmost` `<EASTERNMOST>` - CSVファイルに出力する格子点の最東端の経度(例: 136532213)
 * `-h`, `--help` - ヘルプを出力
+* `-v`, `--version` - バージョンを出力
 
-## 出力結果
-
-出力したCSVファイルには、経度、緯度及び物理値(mm/h)が、この順番でカンマ(`,`)区切りで出力されています。
-また、CSVファイルの最初の行はヘッダです。
-
-## 注意事項
+### 1.3. 注意事項
 
 `-n`オプションなど出力する格子点の範囲を指定する場合、指定したい度単位の緯度や経度を1,000,000倍したときの整数部を指定してください。
 
-## Windowsにおけるコンパイル
+### 1.4. 使用例
 
-> `Ubuntu`など`Linux`系または`macOS`などで、`grib2csv`を実行することをおすすめします。
-> `Windows`より`grib2csv`のコンパイルがとても簡単です。
+```bash
+# 入力ファイルに記録されているすべての格子点を、CSVファイルに出力
+grib2csv input.bin output.csv
+# 入力ファイルに記録されている格子点の内、緯度35度から36度かつ経度135度から136度に含まれる格子点を、
+# CSVファイルに出力
+grib2csv -n 36000000 -s 35000000 -w 135000000 -e 136000000 input.bin output.csv
+# 入力ファイルに記録されている格子点の内、緯度35度以上かつ経度135度以上の格子点を、CSVファイルに出力
+grib2csv -s 35000000 -w 135000000 input.bin output.csv
+```
+
+## 2. 実行結果
+
+`grib2csv`が出力したCSVファイルには、経度、緯度及び物理値(mm/h)が、この順番でカンマ(`,`)区切りで記録されています。
+
+## 3. Windowsでソースコードをコンパイルする
+
 > `Ubuntu`など`Linux`系または`macOS`などで、`grib2csv`をコンパイルする方法は、`Windows`の説明で理解できると思います。
 
-### Microsoft C++ Build Toolのインストール
+### 3.1. Microsoft C++ Build Toolのインストール
 
 1. `Microsoft C++ Build Tool`インストーラーを[ここから](https://visualstudio.microsoft.com/ja/visual-cpp-build-tools/)ダウンロードします。
 2. `Microsoft C++ Build Tool`インストーラーを実行します。
@@ -53,7 +57,7 @@ grib2csv -n 36000000 -s 35000000 -w 135000000 -e 136000000 input.bin output.csv
 4. `Microsoft C++ Build Tool`インストーラー画面で、`インストール`ボタンをクリックします。
 5. `Windows`の再起動が促されたら、再起動します。
 
-## Gitのインストール
+### 3.2. Gitのインストール
 
 1. `Git`のインストーラーを[ここから](https://github.com/git-for-windows/git/releases/download/v2.39.1.windows.1/Git-2.39.1-64-bit.exe)ダウンロードします。
 2. `Git`のインストーラーを実行します。
@@ -62,7 +66,7 @@ grib2csv -n 36000000 -s 35000000 -w 135000000 -e 136000000 input.bin output.csv
     * `Choosing the default editor used by Git`では、`Use Vim ...`を選択して、`Next`ボタンをクリックします。
     * `Adjusting the name of the initial branch in new repositories`では、`Override the default branch name for new repositories`をチェックして、テキストに`main`を入力して、`Next`ボタンをクリックします。
 
-## Rustのインストール
+### 3.3. Rustのインストール
 
 1. `Rust`のインストーラーを[ここから](https://static.rust-lang.org/dist/rust-1.67.0-x86_64-pc-windows-msvc.msi)ダウンロードします。
 2. `Rust`のインストーラーを実行します。
@@ -73,9 +77,9 @@ grib2csv -n 36000000 -s 35000000 -w 135000000 -e 136000000 input.bin output.csv
 rustc --version
 ```
 
-## grib2csvのコンパイルと実行
+### 3.4. grib2csvのコンパイルと実行
 
-### grib2csvのソースコードのダウンロード
+#### 3.4.1. grib2csvのソースコードのダウンロード
 
 1. `PowerShell`を実行します。
 2. `cd`コマンドで、`grib2csv`のソースコードをダウンロード（クローン）するディレクトリをカレントにします。
@@ -85,7 +89,7 @@ rustc --version
 git clone https://github.com/xjr1300/grib2csv.git
 ```
 
-### grib2csvのコンパイル
+#### 3.4.2. grib2csvのコンパイル
 
 1. `grib2csv`のソースコードをクローンした後、`grib2csv`ディレクトリに移動して、コンパイルします。
     * `Rust`を新規にインストールした場合、クレート情報を更新するため、少し時間がかかります。
@@ -96,12 +100,12 @@ cd grib2csv
 cargo build --release
 ```
 
-### grib2csvの実行
+#### 3.4.3. grib2csvの実行
 
 1. パスに`./target/release/`追加するか、`grib2csv.exe`をパスが通っているディレクトリにコピー／移動します。
 2. `grib2csv.exe`を実行します。
 
-## テスト
+## 4. テスト
 
 ```bash
 # 単体テスト
