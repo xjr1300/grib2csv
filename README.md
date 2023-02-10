@@ -92,18 +92,20 @@ git clone https://github.com/xjr1300/grib2csv.git
 
 #### 3.4.2. grib2csvのコンパイル
 
-1. `grib2csv`のソースコードをクローンした後、`grib2csv`ディレクトリに移動して、コンパイルします。
+1. `PowerShell`で`grib2csv`のソースコードをクローンした後、そのまま`PowerShell`でカレント・ディレクトリを移動を`grib2csv`ディレクトリに移動して、コンパイルします。
     * `Rust`を新規にインストールした場合、クレート情報を更新するため、少し時間がかかります。
     * `grib2csv`実行形式ファイルは、`./target/release/grib2csv.exe`に出力されます。
 
 ```bash
+# grib2csvディレクトリにカレント・ディレクトリを移動
 cd grib2csv
+# grib2csvをコンパイル
 cargo build --release
 ```
 
 #### 3.4.3. grib2csvの実行
 
-1. パスに`./target/release/`追加するか、`grib2csv.exe`をパスが通っているディレクトリにコピー／移動します。
+1. `PATH`環境変数に`./target/release/`追加するか、`PATH`環境変数追加されているディレクトリに`grib2csv.exe`をコピー／移動します。
 2. `grib2csv.exe`を実行します。
 
 ## 4. テスト
