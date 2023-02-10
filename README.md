@@ -88,7 +88,7 @@ rustc --version
 3. 以下のコマンドを入力して、`grib2csv`のソースコードをクローンします。
 
 ```bash
-git clone git@github.com:xjr1300/grib2csv.git
+git clone https://github.com/xjr1300/grib2csv.git
 ```
 
 ### grib2csvのコンパイル
