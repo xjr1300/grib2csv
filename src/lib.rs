@@ -268,20 +268,22 @@ impl Grib2Csv {
                         self.section5.level_values[(level - 1) as usize],
                     )?;
                 }
-                *longitude += self.section3.horizontal_increment;
+                *longitude += self.section3.longitude_increment;
                 if self.section3.easternmost < *longitude {
                     *longitude = self.section3.westernmost;
-                    *latitude -= self.section3.vertical_increment;
+                    *latitude -= self.section3.latitude_increment;
                 }
             }
         } else {
             // レベル0は、欠測値であるため、出力しない
-            for _ in 0..count {
-                *longitude += self.section3.horizontal_increment;
-                if self.section3.easternmost < *longitude {
-                    *longitude = self.section3.westernmost;
-                    *latitude -= self.section3.vertical_increment;
-                }
+            let mut lon_increase = self.section3.longitude_increment * count;
+            let lat_times = lon_increase / self.section3.longitude_width();
+            lon_increase %= self.section3.longitude_width();
+            *longitude += lon_increase;
+            *latitude -= self.section3.latitude_increment * lat_times;
+            if self.section3.easternmost < *longitude {
+                *longitude = self.section3.westernmost;
+                *latitude -= self.section3.latitude_increment;
             }
         }
 
@@ -480,9 +482,16 @@ pub struct Section3 {
     /// 最後（最も右下）の格子点の経度（10^6度単位）
     pub easternmost: u32,
     /// i方向（経線方向）の増分（10^6度単位）
-    pub horizontal_increment: u32,
+    pub longitude_increment: u32,
     /// j方向（緯線方向）の増分（10^6度単位）
-    pub vertical_increment: u32,
+    pub latitude_increment: u32,
+}
+
+impl Section3 {
+    /// 経線方向の幅を返却する。
+    fn longitude_width(&self) -> u32 {
+        self.easternmost - self.westernmost
+    }
 }
 
 /// 第3節を読み込んで、第3節の情報を返却する。
@@ -547,8 +556,8 @@ pub fn read_section3(reader: &mut FileReader) -> anyhow::Result<Section3> {
         westernmost,
         southernmost,
         easternmost,
-        horizontal_increment,
-        vertical_increment,
+        longitude_increment: horizontal_increment,
+        latitude_increment: vertical_increment,
     })
 }
 
@@ -923,8 +932,8 @@ mod tests {
         assert_eq!(section3.westernmost, 118006250);
         assert_eq!(section3.southernmost, 20004167);
         assert_eq!(section3.easternmost, 149993750);
-        assert_eq!(section3.horizontal_increment, 12500);
-        assert_eq!(section3.vertical_increment, 8333);
+        assert_eq!(section3.longitude_increment, 12500);
+        assert_eq!(section3.latitude_increment, 8333);
 
         // 第4節を読み飛ばす
         assert!(read_section4(&mut reader).is_ok());
