@@ -48,6 +48,7 @@ pub struct Grib2Csv {
     reader: RefCell<FileReader>,
     section3: Section3,
     section5: Section5,
+    with_header: bool,
 }
 
 #[derive(Default)]
@@ -134,11 +135,12 @@ impl Grib2Csv {
     /// # 引数
     ///
     /// * `path` - grib2ファイルのパス。
+    /// * `with_header` - ヘッダ出力フラグ。
     ///
     /// # 戻り値
     ///
     /// GRIB2Infoインスタンス。
-    pub fn new<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+    pub fn new<P: AsRef<Path>>(path: P, with_header: bool) -> anyhow::Result<Self> {
         let mut reader = BufReader::new(File::open(path.as_ref())?);
         // 第0節を読み込み
         read_section0(&mut reader)?;
@@ -164,6 +166,7 @@ impl Grib2Csv {
             reader: RefCell::new(reader),
             section3,
             section5,
+            with_header,
         })
     }
 
@@ -180,7 +183,10 @@ impl Grib2Csv {
             .create(true)
             .open(path.as_ref())?;
         let mut writer = BufWriter::new(file);
-        writeln!(writer, "longitude,latitude,value")?;
+        // ヘッダ出力
+        if self.with_header {
+            writeln!(writer, "longitude,latitude,value")?;
+        }
 
         // 第7節を読み込み、ランレングス圧縮オクテット列の直前まで読み込み
         let mut reader = self.reader.borrow_mut();

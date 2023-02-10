@@ -31,6 +31,14 @@ struct Args {
     #[arg(short, long, help = "格子点を出力する最東端の経度(例:136000000)")]
     easternmost: Option<u32>,
 
+    /// CSVファイルにヘッダを出力しないかを示すフラグ
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "CSVファイルにヘッダを出力しない"
+    )]
+    no_header: bool,
+
     /// 出力CSVファイル
     #[arg(help = "output csv file")]
     output: String,
@@ -38,7 +46,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let converter = Grib2Csv::new(args.input).unwrap();
+    let converter = Grib2Csv::new(args.input, !args.no_header).unwrap();
     let boundary = BoundaryBuilder::default()
         .northernmost(args.northernmost)
         .southernmost(args.southernmost)
