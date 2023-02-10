@@ -897,13 +897,14 @@ fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u32) {
     }
 
     // ランレングス圧縮を展開
-    let mut count: u32 = 0;
     let values: Vec<u32> = values.iter().map(|v| *v as u32).collect();
     let lngu = lngu as u32;
     let maxv = maxv as u32;
-    for i in 1u32..values.len() as u32 {
-        count += lngu.pow(i - 1) * (values[i as usize] - (maxv + 1));
-    }
+    let count: u32 = values[1..]
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| lngu.pow(i as u32) * (v - (maxv + 1)))
+        .sum();
 
     (values[0] as u16, count + 1)
 }
