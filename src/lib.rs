@@ -285,17 +285,68 @@ impl Grib2Csv {
             }
         } else {
             // レベル0は、欠測値であるため、出力しない
-            for _ in 0..count {
-                *longitude += self.section3.longitude_increment;
-                if self.section3.easternmost < *longitude {
-                    *longitude = self.section3.westernmost;
-                    *latitude -= self.section3.latitude_increment;
-                }
-            }
+            (*longitude, *latitude) = move_lattice_for_missing_values(
+                *longitude,
+                *latitude,
+                count,
+                self.section3.longitude_increment,
+                self.section3.latitude_increment,
+                self.section3.westernmost,
+                self.section3.easternmost,
+            );
         }
 
         Ok(())
     }
+}
+
+/// 欠測値のときに、格子を移動する。
+///
+/// # 引数
+///
+/// * `longitude` - 現在の格子の経度。
+/// * `latitude` - 現在の格子の緯度。
+/// * `count` - 格子のレベル値が連続する数。
+/// * `longitude_increment` - 経線方向の格子の移動量。
+/// * `latitude_increment` - 緯線方向の格子の移動量。
+/// * `lattice_width` - 経線方向の格子の幅。
+/// * `westernmost` - 最西端の経度。
+/// * `easternmost` - 最東端の経度。
+///
+/// # 戻り値
+///
+/// 移動後の格子の経度と緯度のタプル。
+fn move_lattice_for_missing_values(
+    longitude: u32,
+    latitude: u32,
+    count: u32,
+    longitude_increment: u32,
+    latitude_increment: u32,
+    westernmost: u32,
+    easternmost: u32,
+) -> (u32, u32) {
+    let mut longitude = longitude;
+    let mut latitude = latitude;
+    let lattice_width = easternmost - westernmost;
+    // 格子を経線方向に移動する合計の度数
+    let sum_of_lon_inc = longitude_increment as u64 * count as u64;
+    // 格子を緯線方向に移動する格子数
+    let lat_inc_times = sum_of_lon_inc / lattice_width as u64;
+    // 緯線方向に格子を移動
+    latitude -= latitude_increment * lat_inc_times as u32;
+    // 経線方向に格子を移動
+    // 格子が最東端に達したとき、次の格子は最西端かつ緯線南方向に1格子移動する。
+    // このとき、経線方向に格子分移動しないため、緯線方向に移動する回数だけ、経線方向の移動を無効にする。
+    // よって、`- (longitude_increment * lat_inc_times as u32)`している。
+    longitude += ((sum_of_lon_inc % lattice_width as u64)
+        - (longitude_increment as u64 * lat_inc_times)) as u32;
+    if easternmost < longitude {
+        // 上記と同様な理由で、`- longitude_increment`している。
+        longitude = westernmost + (longitude - easternmost - longitude_increment);
+        latitude -= latitude_increment;
+    }
+
+    (longitude, latitude)
 }
 
 /// ファイルから1バイト読み込み、u8型の値として返却する。
@@ -1051,5 +1102,81 @@ mod tests {
         for dataset in coordinates {
             assert!(!boundary.contains(dataset.0, dataset.1), "{:?}", dataset);
         }
+    }
+
+    #[test]
+    fn move_lattice_for_missing_value1() {
+        // 現在の緯度と経度が135度、40度で、レベル0が10個連続したとする。
+        // 経線方向の増加量1度、緯線方向の増加量1度
+        // 最西端130度、最東端150度
+        // 移動後の格子の座標は145度、40度
+        let expected = (145000000u32, 40000000u32);
+        let lattice = move_lattice_for_missing_values(
+            135000000u32,
+            40000000u32,
+            10,
+            1000000,
+            1000000,
+            130000000,
+            150000000,
+        );
+        assert_eq!(lattice, expected);
+    }
+
+    #[test]
+    fn move_lattice_for_missing_value2() {
+        // 現在の緯度と経度が140度、40度で、レベル0が10個連続したとする。
+        // 経線方向の増加量1度、緯線方向の増加量1度
+        // 最西端130度、最東端150度
+        // 移動後の格子の座標は150度、40度
+        let expected = (150000000u32, 40000000u32);
+        let lattice = move_lattice_for_missing_values(
+            140000000u32,
+            40000000u32,
+            10u32,
+            1000000u32,
+            1000000u32,
+            130000000u32,
+            150000000u32,
+        );
+        assert_eq!(lattice, expected);
+    }
+
+    #[test]
+    fn move_lattice_for_missing_value3() {
+        // 現在の緯度と経度が140度、40度で、レベル0が11個連続したとする。
+        // 経線方向の増加量1度、緯線方向の増加量1度
+        // 最西端130度、最東端150度
+        // 移動後の格子の座標は130度、39度
+        let expected = (130000000u32, 39000000u32);
+        let lattice = move_lattice_for_missing_values(
+            140000000u32,
+            40000000u32,
+            11u32,
+            1000000u32,
+            1000000u32,
+            130000000u32,
+            150000000u32,
+        );
+        assert_eq!(lattice, expected);
+    }
+
+    #[test]
+    fn move_lattice_for_missing_value4() {
+        // 現在の緯度と経度が145度、40度で、レベル0が50個連続したとする。
+        // 経線方向の増加量1度、緯線方向の増加量1度
+        // 最西端130度、最東端150度
+        // 移動後の格子の座標は134度、37度
+        let expected = (132000000u32, 37000000u32);
+        let lattice = move_lattice_for_missing_values(
+            145000000u32,
+            40000000u32,
+            50u32,
+            1000000u32,
+            1000000u32,
+            130000000u32,
+            150000000u32,
+        );
+        assert_eq!(lattice, expected);
     }
 }
