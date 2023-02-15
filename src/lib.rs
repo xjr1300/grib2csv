@@ -386,7 +386,7 @@ fn read_u32(reader: &mut FileReader) -> anyhow::Result<u32> {
 ///
 /// ファイル・ポインタが、ファイルの先頭にあることを想定している。
 /// 関数終了後、ファイル・ポインタは第1節の開始位置に移動する。
-pub fn read_section0(reader: &mut FileReader) -> anyhow::Result<()> {
+fn read_section0(reader: &mut FileReader) -> anyhow::Result<()> {
     // GRIB
     read_section0_grib(reader)?;
     // 保留: 2bytes
@@ -438,7 +438,7 @@ fn read_section0_grib_version(reader: &mut FileReader) -> anyhow::Result<()> {
 /// ファイルポインタが、第1節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第3節の開始位置に移動する。
 /// なお、実装時点で、第2節は省略されている。
-pub fn read_section1(reader: &mut FileReader) -> anyhow::Result<()> {
+fn read_section1(reader: &mut FileReader) -> anyhow::Result<()> {
     // 節の長さ: 4bytes
     reader.seek_relative(4)?;
     // 節番号
@@ -528,7 +528,7 @@ fn read_section1_document_kind(reader: &mut FileReader) -> anyhow::Result<()> {
 }
 
 /// 第3節情報
-pub struct Section3 {
+struct Section3 {
     /// 資料点数
     pub number_of_points: u32,
     /// 最初（最も左上）の格子点の緯度（10^6度単位）
@@ -536,6 +536,7 @@ pub struct Section3 {
     /// 最初（最も左上）の格子点の経度（10^6度単位）
     pub westernmost: u32,
     /// 最後（最も右下）の格子点の緯度（10^6度単位）
+    #[allow(dead_code)]
     pub southernmost: u32,
     /// 最後（最も右下）の格子点の経度（10^6度単位）
     pub easternmost: u32,
@@ -549,7 +550,7 @@ pub struct Section3 {
 ///
 /// ファイルポインタが、第3節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第4節の開始位置に移動する。
-pub fn read_section3(reader: &mut FileReader) -> anyhow::Result<Section3> {
+fn read_section3(reader: &mut FileReader) -> anyhow::Result<Section3> {
     // 節の長さ: 4bytes
     reader.seek_relative(4)?;
     // 節番号
@@ -727,7 +728,7 @@ fn read_section3_scanning_mode(reader: &mut FileReader) -> anyhow::Result<()> {
 ///
 /// ファイルポインタが、第4節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第5節の開始位置に移動する。
-pub fn read_section4(reader: &mut FileReader) -> anyhow::Result<()> {
+fn read_section4(reader: &mut FileReader) -> anyhow::Result<()> {
     // 第4節 節の長さを読み込み
     let length = read_u32(reader).map_err(|_| anyhow!("failed to read length of section 4"))?;
     // 節番号
@@ -744,7 +745,7 @@ pub fn read_section4(reader: &mut FileReader) -> anyhow::Result<()> {
 }
 
 /// 第5節情報
-pub struct Section5 {
+struct Section5 {
     /// 全資料点の数
     pub number_of_points: u32,
     /// 1データのビット数
@@ -752,6 +753,7 @@ pub struct Section5 {
     /// 今回の圧縮に用いたレベルの最大値
     pub max_level_at_file: u16,
     /// レベルの最大値
+    #[allow(dead_code)]
     pub max_level: u16,
     /// レベルmに対応するデータ代表値
     /// レベル値と物理値(mm/h)の対応を格納するコレクション
@@ -762,7 +764,7 @@ pub struct Section5 {
 ///
 /// ファイルポインタが、第5節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第6節の開始位置に移動する。
-pub fn read_section5(reader: &mut FileReader) -> anyhow::Result<Section5> {
+fn read_section5(reader: &mut FileReader) -> anyhow::Result<Section5> {
     // 節の長さ
     let length = read_u32(reader).map_err(|_| anyhow!("failed to read length of section 5"))?;
     // 節番号
@@ -850,7 +852,7 @@ fn read_section5_data_value_factor(reader: &mut FileReader) -> anyhow::Result<()
 ///
 /// ファイルポインタが、第5節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第6節の開始位置に移動する。
-pub fn read_section6(reader: &mut FileReader) -> anyhow::Result<()> {
+fn read_section6(reader: &mut FileReader) -> anyhow::Result<()> {
     // 節の長さ: 4bytes
     reader.seek_relative(4)?;
     // 節番号
@@ -865,7 +867,7 @@ pub fn read_section6(reader: &mut FileReader) -> anyhow::Result<()> {
 }
 
 /// 第8節を読み込んで、確認する。
-pub fn read_section8(reader: &mut FileReader) -> anyhow::Result<()> {
+fn read_section8(reader: &mut FileReader) -> anyhow::Result<()> {
     let mut buf = [0; 4];
     let size = reader
         .read(&mut buf)
