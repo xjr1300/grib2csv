@@ -170,7 +170,10 @@ impl Grib2Csv {
         })
     }
 
-    /// GRIB2ファイルをCSV形式のファイルを出力する。
+    /// GRIB2ファイルの第7節を読み込んで、データをCSV形式のファイルに出力する。
+    ///
+    /// GRIB2ファイルを正確に読み込みできたか確認するために、処理の最後で第8節を読み込み、
+    /// "7777"を読み込めるか確認する。
     ///
     /// # 引数
     ///
@@ -282,17 +285,68 @@ impl Grib2Csv {
             }
         } else {
             // レベル0は、欠測値であるため、出力しない
-            for _ in 0..count {
-                *longitude += self.section3.longitude_increment;
-                if self.section3.easternmost < *longitude {
-                    *longitude = self.section3.westernmost;
-                    *latitude -= self.section3.latitude_increment;
-                }
-            }
+            (*longitude, *latitude) = move_lattice_for_missing_values(
+                *longitude,
+                *latitude,
+                count,
+                self.section3.longitude_increment,
+                self.section3.latitude_increment,
+                self.section3.westernmost,
+                self.section3.easternmost,
+            );
         }
 
         Ok(())
     }
+}
+
+/// 欠測値のときに、格子を移動する。
+///
+/// # 引数
+///
+/// * `longitude` - 現在の格子の経度。
+/// * `latitude` - 現在の格子の緯度。
+/// * `count` - 格子のレベル値が連続する数。
+/// * `longitude_increment` - 経線方向の格子の移動量。
+/// * `latitude_increment` - 緯線方向の格子の移動量。
+/// * `lattice_width` - 経線方向の格子の幅。
+/// * `westernmost` - 最西端の経度。
+/// * `easternmost` - 最東端の経度。
+///
+/// # 戻り値
+///
+/// 移動後の格子の経度と緯度のタプル。
+fn move_lattice_for_missing_values(
+    longitude: u32,
+    latitude: u32,
+    count: u32,
+    longitude_increment: u32,
+    latitude_increment: u32,
+    westernmost: u32,
+    easternmost: u32,
+) -> (u32, u32) {
+    let mut longitude = longitude;
+    let mut latitude = latitude;
+    let lattice_width = easternmost - westernmost;
+    // 格子を経線方向に移動する合計の度数
+    let sum_of_lon_inc = longitude_increment as u64 * count as u64;
+    // 格子を緯線方向に移動する格子数
+    let lat_inc_times = sum_of_lon_inc / lattice_width as u64;
+    // 緯線方向に格子を移動
+    latitude -= latitude_increment * lat_inc_times as u32;
+    // 経線方向に格子を移動
+    // 格子が最東端に達したとき、次の格子は最西端かつ緯線南方向に1格子移動する。
+    // このとき、経線方向に格子分移動しないため、緯線方向に移動する回数だけ、経線方向の移動を無効にする。
+    // よって、`- (longitude_increment * lat_inc_times as u32)`している。
+    longitude += ((sum_of_lon_inc % lattice_width as u64)
+        - (longitude_increment as u64 * lat_inc_times)) as u32;
+    if easternmost < longitude {
+        // 上記と同様な理由で、`- longitude_increment`している。
+        longitude = westernmost + (longitude - easternmost - longitude_increment);
+        latitude -= latitude_increment;
+    }
+
+    (longitude, latitude)
 }
 
 /// ファイルから1バイト読み込み、u8型の値として返却する。
@@ -826,50 +880,50 @@ pub fn read_section8(reader: &mut FileReader) -> anyhow::Result<()> {
     }
 }
 
-/// 1セットのランレングス圧縮データを展開する。
+/// 1セットのランレングス符号化（圧縮）を展開する。
 ///
-/// valuesは要素数2以上のu8スライスを想定している。
 /// valuesの最初の要素はレベル値で、それ以降はランレングス値である。
-/// これを1セットのランレングス圧縮データとしている。
+/// これを1セットのランレングス符号化とする。
+/// ランレングス値を含まない場合のvaluesの要素数は1で、ランレングス値を含む場合のvaluesの要素数は2以上である。
 ///
-/// この関数が処理する、GRIB2資料テンプレート7.200（気象庁定義資料テンプレート）で利用されているランレングス符号化を以下に示す。
+/// この関数が展開する、GRIB2資料テンプレート7.200（気象庁定義資料テンプレート）で利用されているランレングス符号化を以下に示す。
 ///
-/// * 格子点値が取りうる値
-///   * 値は2次元矩形領域の格子点上に存在し、0以上MAXV以下の整数を取る。
-///   * ここでMAXVは、GRIB 資料表現テンプレート5.200（気象庁定義資料表現テンプレート）第5節13-14オクテットで示される「今回の圧縮に用いたレベルの最大値」である。
+/// * 格子点値が取りうるレベル値
+///   * レベル値は2次元矩形領域の格子点上に存在し、0以上MAXV以下の整数を取る。
+///   * ここでMAXVは、GRIB資料表現テンプレート5.200（気象庁定義資料表現テンプレート）第5節13-14オクテットで示される「今回の圧縮に用いたレベルの最大値」である。
 ///     * 第5節15-16オクテットの「レベルの最大値」ではないことに注意すること。
 /// * 2次元データの1次元化
 ///   * 主走査方向を2次元矩形領域の左から右（通常西から東）、副走査方向を上から下（通常北から南）として、2次元データを1次元化する。
-///     * データは最も左上の格子点の値から始まり、東方向に向かって格子点の値を記録する。
-///     * その緯度の最東端に達したら、下の最西端の格子点に移動して、同様に格子点の値を記録する。
-///     * よって最初のデータは最も左上の格子点の値であり、最後のデータは最も右下の格子点の値である。
-/// * 圧縮後の1格子点値当りのビット数（NBIT）
-///   * 圧縮されたデータ列の中で、1格子点値が占めるビット数であり、ランレングスのデータもこのビット数が用いられる。
-///   * NBITはGRIB2資料表現テンプレート5.200第5節12オクテットで示される「1データのビット数」である。
-/// * 1セット内の値とランレングスの配置
-///   * 圧縮されたデータ列の中で0以上MAXV以下のデータは各格子点の値とし、MAXVよりも大きなデータはランレングスの値とする。
-///   * 1セットは、まず値を配置し、もしその値が連続するようであれば後ろにランレングスを付加することによって作られる。
-///   * MAXVよりも大きなデータが続く場合はすべてそのセットのランレングスの情報である。
-///   * ランレングスに、MAXV以下のデータが現れた時点でそのセットは終了し、このMAXV以下のデータは次のセットの値となる。
-///   * なお、同じ値が連続しない場合はランレングスは付加されず、次のセットに移る。
-/// * ランレングスの作成手法
+///     * データは最も左上の格子点の値から始まり、東方向に向かって格子点のレベル値を記録する。
+///     * その緯度の最東端に達したら、下の最西端の格子点に移動して、上記同様に格子点のレベル値を記録する。
+///   * 最初のデータは最も左上の格子点の値であり、最後のデータは最も右下の格子点の値である。
+/// * ランレングス符号化後の1格子点値当りのビット数（NBIT）
+///   * NBITは、ランレングス符号化されたデータ列の中で、レベル値及びランレングス値を表現するビット数である。
+///   * NBITは、GRIB2資料表現テンプレート5.200第5節12オクテットで示される「1データのビット数」である。
+/// * 1セット内のレベル値とランレングス値の配置
+///   * ランレングス符号化されたデータ列の中で0以上MAXV以下の値は各格子点のレベル値で、MAXVよりも大きな値はランレングス値である。
+///   * 1セットは、最初にレベル値を配置し、もしその値が連続するのであれば後ろにランレングス値を付加して作成される。
+///   * MAXVよりも大きな値が続く場合、それらすべては当該セットのランレングス値である。
+///   * データに、MAXV以下の値が現れた時点で当該セットが終了し、このMAXV以下の値は次のセットのレベル値となる。
+///   * なお、同じレベル値が連続しない場合はランレングスは付加されず、次のセットに移る。
+/// * ランレングス符号化方法
 ///   * (2 ^ NBIT - MAXV)よりも大きなランレングスが必要となった場合、1データでは表現することができない。
-///   * そのような場合、2データ以上を連続させてランレングスの情報を表すが、連続したデータの単純な総和をランレングスとするのでは圧縮効率があがらない。
+///   * これに対応するために、2つ以上のランレングス値を連続させてランレングスを表現するが、連続したデータの単純な総和をランレングスとしても圧縮効率があがらない。
 ///   * よって、LNGU(=2 ^ NBIT - 1 - MAXV)進数を用いてランレングスを表現する。
-///   * 値のすぐ後に続く最初のランレングス値(data1)をLNGU進数の1桁目 RL1={LNGU ^ (1 - 1) * (data1 - (MAXV + 1))}とする。
+///   * レベル値のすぐ後に続く最初のランレングス値(data1)をLNGU進数の1桁目 RL1={LNGU ^ (1 - 1) * (data1 - (MAXV + 1))}とする。
 ///   * それ以降n番目のランレングス値(dataN)は LNGU進数のn桁目 RLn={LNGU ^ (n - 1) * (dataN - (MAXV + 1))}とする。
-///   * 最終的なランレングスはそれらの「総和 + 1(RL = ΣRLi + 1)」となる。
-/// * 圧縮データ例
+///   * 最終的なランレングスは、それらの「総和 + 1(RL = ΣRLi + 1)」となる。
+/// * ランレングス符号化例
 ///   * NBIT = 4、MAXV = 10とした場合、LNGU = 2 ^ 4 - 1 - 10 = 16 - 1 - 10 = 5となる。
-///   * 圧縮データ列={3, 9, 12, 6, 4, 15, 2, 1, 0, 13, 12, 2, 3}は以下の通り展開される。
+///   * ランレングス符号化列 = {3, 9, 12, 6, 4, 15, 2, 1, 0, 13, 12, 2, 3}は、以下の通り展開される。
 ///   * {3, 9, 9, 6, 4, 4, 4, 4, 4, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3}
-///   * 圧縮データ列{9, 12}
+///   * レベル値とランレングス値のセット{9, 12}
 ///     * 9がレベル値で12がランレングス値である。
 ///     * 12の次は6であり、10以下であるため6はレベル値である。
 ///     * RL1 = 5 ^ (1 - 1) * (12 - (10 + 1)) = 1 * 1 = 1
 ///     * RL = 1 + 1 = 2
 ///     * よって、9が２つ連続する。
-///   * 圧縮データ列{0, 13, 12}
+///   * レベル値とランレングス値のセット{0, 13, 12}
 ///     * 0がレベル値で13と12がランレングス値である。
 ///     * RL1 = 5 ^ (1 - 1) * (13 - (10 + 1)) = 1 * 2 = 2
 ///     * RL2 = 5 ^ (2 - 1) * (12 - (10 + 1)) = 5 * 1 = 5
@@ -884,7 +938,7 @@ pub fn read_section8(reader: &mut FileReader) -> anyhow::Result<()> {
 ///
 /// # 戻り値
 ///
-/// レベルとレベルの数を格納したタプル。
+/// レベル値とそのレベル値を繰り返す数を格納したタプル。
 fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u32) {
     assert!(values[0] <= maxv, "values[0]={}, maxv={}", values[0], maxv);
 
@@ -894,13 +948,14 @@ fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u32) {
     }
 
     // ランレングス圧縮を展開
-    let mut count: u32 = 0;
     let values: Vec<u32> = values.iter().map(|v| *v as u32).collect();
     let lngu = lngu as u32;
     let maxv = maxv as u32;
-    for i in 1u32..values.len() as u32 {
-        count += lngu.pow(i - 1) * (values[i as usize] - (maxv + 1));
-    }
+    let count: u32 = values[1..]
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| lngu.pow(i as u32) * (v - (maxv + 1)))
+        .sum();
 
     (values[0] as u16, count + 1)
 }
@@ -909,8 +964,7 @@ fn expand_run_length(values: &[u16], maxv: u16, lngu: u16) -> (u16, u32) {
 mod tests {
     use super::*;
 
-    const SAMPLE_FILE: &'static str =
-        "fixtures/Z__C_RJTD_20200707073000_SRF_GPV_Ggis1km_Prr60lv_ANAL_grib2.bin";
+    const SAMPLE_FILE: &'static str = "fixtures/sample.bin";
     const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 77;
 
     #[test]
@@ -1048,5 +1102,81 @@ mod tests {
         for dataset in coordinates {
             assert!(!boundary.contains(dataset.0, dataset.1), "{:?}", dataset);
         }
+    }
+
+    #[test]
+    fn move_lattice_for_missing_value1() {
+        // 現在の緯度と経度が135度、40度で、レベル0が10個連続したとする。
+        // 経線方向の増加量1度、緯線方向の増加量1度
+        // 最西端130度、最東端150度
+        // 移動後の格子の座標は145度、40度
+        let expected = (145000000u32, 40000000u32);
+        let lattice = move_lattice_for_missing_values(
+            135000000u32,
+            40000000u32,
+            10,
+            1000000,
+            1000000,
+            130000000,
+            150000000,
+        );
+        assert_eq!(lattice, expected);
+    }
+
+    #[test]
+    fn move_lattice_for_missing_value2() {
+        // 現在の緯度と経度が140度、40度で、レベル0が10個連続したとする。
+        // 経線方向の増加量1度、緯線方向の増加量1度
+        // 最西端130度、最東端150度
+        // 移動後の格子の座標は150度、40度
+        let expected = (150000000u32, 40000000u32);
+        let lattice = move_lattice_for_missing_values(
+            140000000u32,
+            40000000u32,
+            10u32,
+            1000000u32,
+            1000000u32,
+            130000000u32,
+            150000000u32,
+        );
+        assert_eq!(lattice, expected);
+    }
+
+    #[test]
+    fn move_lattice_for_missing_value3() {
+        // 現在の緯度と経度が140度、40度で、レベル0が11個連続したとする。
+        // 経線方向の増加量1度、緯線方向の増加量1度
+        // 最西端130度、最東端150度
+        // 移動後の格子の座標は130度、39度
+        let expected = (130000000u32, 39000000u32);
+        let lattice = move_lattice_for_missing_values(
+            140000000u32,
+            40000000u32,
+            11u32,
+            1000000u32,
+            1000000u32,
+            130000000u32,
+            150000000u32,
+        );
+        assert_eq!(lattice, expected);
+    }
+
+    #[test]
+    fn move_lattice_for_missing_value4() {
+        // 現在の緯度と経度が145度、40度で、レベル0が50個連続したとする。
+        // 経線方向の増加量1度、緯線方向の増加量1度
+        // 最西端130度、最東端150度
+        // 移動後の格子の座標は134度、37度
+        let expected = (132000000u32, 37000000u32);
+        let lattice = move_lattice_for_missing_values(
+            145000000u32,
+            40000000u32,
+            50u32,
+            1000000u32,
+            1000000u32,
+            130000000u32,
+            150000000u32,
+        );
+        assert_eq!(lattice, expected);
     }
 }
