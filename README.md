@@ -118,7 +118,7 @@ git clone https://github.com/xjr1300/grib2csv.git
 
 #### [3.4.2. grib2csvのコンパイル](#342-grib2csvのコンパイル)
 
-1. `PowerShell`で`grib2csv`のソースコードをクローンした後、そのまま`PowerShell`でカレント・ディレクトリを移動を`grib2csv`ディレクトリに移動して、コンパイルします。
+1. `PowerShell`で`grib2csv`のソースコードをクローンした後、そのまま`PowerShell`でカレント・ディレクトリを`grib2csv`ディレクトリに移動して、コンパイルします。
     - `Rust`を新規にインストールした場合、クレート情報を更新するため、少し時間がかかります。
     - `grib2csv`実行形式ファイルは、`./target/release/grib2csv.exe`に出力されます。
 
@@ -138,7 +138,7 @@ cargo build --release
 
 ## [4. grib2csvのアップデート](#4-grib2csvのアップデート)
 
-[3. Windowsでソースコードをコンパイルする](#3-windowsでソースコードをコンパイルする)ができた状態で説明します。
+[3. Windowsでソースコードをコンパイルする](#3-windowsでソースコードをコンパイルする)が可能な環境で説明します。
 
 1. `PowerShell`を起動して、`grib2csv`ディレクトリをカレントディレクトリ（[3.4.2. grib2csvのコンパイル](#342-grib2csvのコンパイル)のディレクトリ）にします。
 2. リポジトリから最新のコードを取得（フェッチ）します。
