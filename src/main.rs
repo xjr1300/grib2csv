@@ -7,12 +7,13 @@ use grib2csv::{BoundaryBuilder, Grib2Csv};
     name = "grib2csv",
     version = "0.0.2",
     author = "xjr1300.04@gmail.com",
-    about = "GRIB2通報式による1kmメッシュ解析雨量または降水短時間予報データを、CSV形式のファイルに変換します。\n\n\
-             格子点を出力する領域を指定する場合、度単位の緯度または経度を1,000,000倍した整数部を指定してください。"
+    about = "GRIB2通報式による1kmメッシュ解析雨量または降水短時間予報データを、CSV形式のファイルに変換します。\n\
+        欠測値を持つ格子点は、CSVファイルに出力されません。\n\
+        格子点を出力する領域を指定する場合、度単位の緯度または経度を1,000,000倍した整数部を指定してください。"
 )]
 struct Args {
     /// 入力GRIB2ファイル
-    #[arg(help = "input grib file")]
+    #[arg(help = "入力GRIB2ファイルのパス")]
     input: String,
 
     /// CSVファイルに出力する格子点の最北端の緯度
@@ -40,7 +41,7 @@ struct Args {
     no_header: bool,
 
     /// 出力CSVファイル
-    #[arg(help = "output csv file")]
+    #[arg(help = "出力CSVファイルのパス")]
     output: String,
 }
 
