@@ -724,7 +724,7 @@ fn read_section3_scanning_mode(reader: &mut FileReader) -> anyhow::Result<()> {
     }
 }
 
-/// 第4節を読み混んで確認する。
+/// 第4節を読み込んで確認する。
 ///
 /// ファイルポインタが、第4節の開始位置にあることを想定している。
 /// 関数終了後、ファイルポインタは第5節の開始位置に移動する。
@@ -967,7 +967,7 @@ mod tests {
     use super::*;
 
     const SAMPLE_FILE: &'static str = "fixtures/sample.bin";
-    const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 77;
+    const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 84;
 
     #[test]
     fn can_read_grib_file() {
