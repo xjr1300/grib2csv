@@ -967,7 +967,7 @@ mod tests {
     use super::*;
 
     const SAMPLE_FILE: &'static str = "fixtures/sample.bin";
-    const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 77;
+    const SAMPLE_MAX_LEVEL_THIS_TIME: u16 = 84;
 
     #[test]
     fn can_read_grib_file() {
