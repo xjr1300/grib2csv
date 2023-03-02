@@ -5,7 +5,7 @@ use grib2csv::{BoundaryBuilder, Grib2Csv};
 #[derive(Parser)]
 #[clap(
     name = "grib2csv",
-    version = "0.0.4",
+    version = "0.1.4",
     author = "xjr1300.04@gmail.com",
     about = "GRIB2通報式による1kmメッシュ解析雨量または降水短時間予報データを、CSV形式のファイルに変換します。\n\
         欠測値を持つ格子点は、CSVファイルに出力されません。\n\
