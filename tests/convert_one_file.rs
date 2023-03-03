@@ -25,10 +25,7 @@ fn test() {
             Ok(_) => {
                 let expected_line = expected_line.unwrap();
                 let output_line = output_line.trim();
-                assert_eq!(
-                    expected_line, output_line,
-                    "expected={expected}, actual={output_line}"
-                );
+                assert_eq!(expected_line, output_line);
             }
             _ => assert!(false, "the output csv file can't be read any more"),
         }
